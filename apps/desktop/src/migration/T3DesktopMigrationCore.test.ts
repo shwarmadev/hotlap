@@ -310,9 +310,11 @@ describe("T3DesktopMigrationCore", () => {
     const incompleteDatabase = new DatabaseSync(
       NodePath.join(incompletePaths.sourceStateDir, "state.sqlite"),
     );
+    const lastMigrationId = t3MigrationManifest.at(-1)?.[0];
+    assert.ok(lastMigrationId);
     incompleteDatabase
       .prepare("DELETE FROM effect_sql_migrations WHERE migration_id = ?")
-      .run(t3MigrationManifest.at(-1)?.[0]);
+      .run(lastMigrationId);
     incompleteDatabase.close();
 
     const incompleteInspection = await inspectT3DesktopMigration({
