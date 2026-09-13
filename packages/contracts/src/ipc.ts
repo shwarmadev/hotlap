@@ -1211,6 +1211,78 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+export const DesktopT3MigrationReasonSchema = Schema.Literals([
+  "unsupported-platform",
+  "development-build",
+  "custom-home",
+  "source-missing",
+  "source-running",
+  "source-busy",
+  "schema-unsupported",
+  "destination-changed",
+  "recovery-required",
+  "unknown-source-entry",
+]);
+export type DesktopT3MigrationReason = typeof DesktopT3MigrationReasonSchema.Type;
+
+export const DesktopT3MigrationPairingTransferSchema = Schema.Literals([
+  "preserved",
+  "re-pair-required",
+]);
+export type DesktopT3MigrationPairingTransfer = typeof DesktopT3MigrationPairingTransferSchema.Type;
+
+export const DesktopT3MigrationSummarySchema = Schema.Struct({
+  projectCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  threadCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  destinationHasData: Schema.Boolean,
+  pairingTransfer: DesktopT3MigrationPairingTransferSchema,
+});
+export type DesktopT3MigrationSummary = typeof DesktopT3MigrationSummarySchema.Type;
+
+export const DesktopT3MigrationInspectionSchema = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("unavailable"),
+    reason: DesktopT3MigrationReasonSchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("ready"),
+    dismissed: Schema.Boolean,
+    summary: DesktopT3MigrationSummarySchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("blocked"),
+    reason: DesktopT3MigrationReasonSchema,
+    dismissed: Schema.Boolean,
+    summary: Schema.optionalKey(DesktopT3MigrationSummarySchema),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("completed"),
+    pairingTransfer: DesktopT3MigrationPairingTransferSchema,
+  }),
+]);
+export type DesktopT3MigrationInspection = typeof DesktopT3MigrationInspectionSchema.Type;
+
+export const DesktopT3MigrationStartInputSchema = Schema.Struct({
+  replaceExisting: Schema.Boolean,
+});
+export type DesktopT3MigrationStartInput = typeof DesktopT3MigrationStartInputSchema.Type;
+
+export const DesktopT3MigrationStartResultSchema = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("completed"),
+    pairingTransfer: DesktopT3MigrationPairingTransferSchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("blocked"),
+    reason: DesktopT3MigrationReasonSchema,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("error"),
+    message: TrimmedNonEmptyString,
+  }),
+]);
+export type DesktopT3MigrationStartResult = typeof DesktopT3MigrationStartResultSchema.Type;
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** The desktop client's OS platform, read from Electron's preload process. */
@@ -1229,6 +1301,12 @@ export interface DesktopBridge {
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;
+  /** Optional while older desktop shells can host a newer web client. */
+  inspectT3DesktopMigration?: () => Promise<DesktopT3MigrationInspection>;
+  dismissT3DesktopMigration?: () => Promise<void>;
+  startT3DesktopMigration?: (
+    input: DesktopT3MigrationStartInput,
+  ) => Promise<DesktopT3MigrationStartResult>;
   getConnectionCatalog?: () => Promise<string | null>;
   setConnectionCatalog?: (catalog: string) => Promise<boolean>;
   clearConnectionCatalog?: () => Promise<void>;
