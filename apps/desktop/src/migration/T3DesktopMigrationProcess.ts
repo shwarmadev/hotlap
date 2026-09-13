@@ -1,10 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This macOS adapter reads process state without changing it.
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeUtil from "node:util";
 
 import type { T3DesktopProcessProbe } from "./T3DesktopMigrationCore.ts";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
 
 const T3_DESKTOP_MAIN_PROCESS =
   /\/T3 Code(?: \([^/]+\))?\.app\/Contents\/MacOS\/T3 Code(?: \([^/]+\))?(?:\s|$)/u;

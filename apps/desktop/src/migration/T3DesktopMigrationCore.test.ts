@@ -1,8 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated temporary homes exercise the real atomic migration filesystem boundary.
-import { mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
+
+const { mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } = NodeFSP;
+const { DatabaseSync } = NodeSqlite;
 
 import { assert, describe, it } from "@effect/vitest";
 import { t3MigrationManifest } from "@t3tools/shared/t3MigrationManifest";

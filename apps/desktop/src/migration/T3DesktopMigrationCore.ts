@@ -1,20 +1,11 @@
 // @effect-diagnostics globalDate:off nodeBuiltinImport:off -- This desktop migration boundary needs atomic filesystem moves, SQLite inspection, and durable wall-clock receipts.
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import * as NodeCrypto from "node:crypto";
+import * as NodeSqlite from "node:sqlite";
+
+const { copyFile, lstat, mkdir, open, readFile, readdir, rename, rm, stat, unlink } = NodeFSP;
+const { randomUUID } = NodeCrypto;
 
 import { snapshotSqliteDatabase } from "@t3tools/shared/sqliteSnapshot";
 import * as Effect from "effect/Effect";
@@ -203,9 +194,9 @@ async function destinationHasWorkspaceData(paths: T3DesktopMigrationPaths): Prom
 
   const databasePath = NodePath.join(paths.destinationStateDir, "state.sqlite");
   if (await pathExists(databasePath)) {
-    let database: DatabaseSync;
+    let database: NodeSqlite.DatabaseSync;
     try {
-      database = new DatabaseSync(databasePath, { readOnly: true });
+      database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
     } catch {
       return true;
     }
@@ -316,19 +307,19 @@ async function writeJsonAtomically(path: string, value: unknown): Promise<void> 
   await syncDirectory(NodePath.dirname(path));
 }
 
-function queryCount(database: DatabaseSync, sql: string): number {
+function queryCount(database: NodeSqlite.DatabaseSync, sql: string): number {
   const row = database.prepare(sql).get() as { readonly count: number } | undefined;
   return row?.count ?? 0;
 }
 
-function hasTable(database: DatabaseSync, name: string): boolean {
+function hasTable(database: NodeSqlite.DatabaseSync, name: string): boolean {
   const row = database
     .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(name) as { readonly present: number } | undefined;
   return row?.present === 1;
 }
 
-function hasColumn(database: DatabaseSync, table: string, column: string): boolean {
+function hasColumn(database: NodeSqlite.DatabaseSync, table: string, column: string): boolean {
   if (!hasTable(database, table)) return false;
   return (
     database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ readonly name: string }>
@@ -336,7 +327,7 @@ function hasColumn(database: DatabaseSync, table: string, column: string): boole
 }
 
 function validateMigrationLedger(
-  database: DatabaseSync,
+  database: NodeSqlite.DatabaseSync,
   manifest: ReadonlyArray<readonly [number, string]>,
 ): boolean {
   if (!hasTable(database, "effect_sql_migrations")) return false;
@@ -390,9 +381,9 @@ function databaseSummary(
 ):
   | T3DesktopMigrationSummary
   | { readonly blocked: true; readonly reason: T3DesktopMigrationBlockedReason } {
-  let database: DatabaseSync;
+  let database: NodeSqlite.DatabaseSync;
   try {
-    database = new DatabaseSync(databasePath, { readOnly: true });
+    database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
   } catch {
     return { blocked: true, reason: "schema-unsupported" };
   }
@@ -734,13 +725,13 @@ async function moveAside(path: string, targetRoot: string, name: string): Promis
 
 interface DestinationDatabaseObserver {
   readonly databasePath: string;
-  readonly database: DatabaseSync | null;
+  readonly database: NodeSqlite.DatabaseSync | null;
   readonly dataVersion: number | null;
   readonly device: number | null;
   readonly inode: number | null;
 }
 
-function readDataVersion(database: DatabaseSync): number {
+function readDataVersion(database: NodeSqlite.DatabaseSync): number {
   const row = database.prepare("PRAGMA data_version").get() as
     | { readonly data_version: number }
     | undefined;
@@ -755,7 +746,7 @@ async function observeDestinationDatabase(
     return { databasePath, database: null, dataVersion: null, device: null, inode: null };
   }
   const identity = await stat(databasePath);
-  const database = new DatabaseSync(databasePath, { readOnly: true });
+  const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
   return {
     databasePath,
     database,

@@ -1,7 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This service is the native boundary for inspecting and atomically moving desktop homes.
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { randomUUID } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
+
+const { mkdir, readFile, rename, writeFile } = NodeFSP;
+const { randomUUID } = NodeCrypto;
 
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import {
@@ -68,6 +71,8 @@ export class DesktopT3MigrationOperationError extends Schema.TaggedError<Desktop
     return this.detail;
   }
 }
+
+const isDesktopT3MigrationOperationError = Schema.is(DesktopT3MigrationOperationError);
 
 function operationError(
   operation: typeof DesktopT3MigrationOperation.Type,
@@ -219,7 +224,7 @@ function validateImportedBackend(input: {
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.mapError((cause) =>
-      Schema.is(DesktopT3MigrationOperationError)(cause)
+      isDesktopT3MigrationOperationError(cause)
         ? cause
         : operationError(
             "validate-backend",
