@@ -319,6 +319,10 @@
       "types": "./src/nodeSqliteClient.ts",
       "import": "./src/nodeSqliteClient.ts"
     },
+    "./sqliteSnapshot": {
+      "types": "./src/sqliteSnapshot.ts",
+      "import": "./src/sqliteSnapshot.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
