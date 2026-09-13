@@ -32,7 +32,6 @@ import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
-import * as DesktopT3Migration from "../migration/DesktopT3Migration.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -260,18 +259,8 @@ const startup = Effect.gen(function* () {
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const t3Migration = yield* DesktopT3Migration.DesktopT3Migration;
 
   yield* shellEnvironment.installIntoProcess;
-  const migrationRecovery = yield* t3Migration.recover;
-  if (migrationRecovery.status === "blocked") {
-    return yield* new DesktopT3Migration.DesktopT3MigrationOperationError({
-      operation: "recover",
-      detail:
-        "Hotlap preserved conflicting data from an interrupted T3 Code switch. No data was removed; manual recovery is required.",
-      cause: migrationRecovery,
-    });
-  }
   const hasCommandLinePasswordStore =
     preReadyElectronOptions.linuxPasswordStoreCommandLine !== null;
   const linuxElectronOptions =

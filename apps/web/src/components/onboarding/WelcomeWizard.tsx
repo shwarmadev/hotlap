@@ -76,8 +76,6 @@ import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
-import { T3DesktopMigrationFlow } from "./T3DesktopMigration";
-import { getT3DesktopMigrationBridge } from "./T3DesktopMigration.logic";
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
@@ -88,12 +86,11 @@ import { getT3DesktopMigrationBridge } from "./T3DesktopMigration.logic";
  * re-runnable by clearing the flag.
  */
 
-type WizardStep = "migration" | "connection" | "agents" | "import";
+type WizardStep = "connection" | "agents" | "import";
 const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
 
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
-const MIGRATION_ONBOARDING_STAGES = ["Switch", ...ONBOARDING_STAGES] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 export function WelcomeWizard({
@@ -105,12 +102,7 @@ export function WelcomeWizard({
   readonly onDone: (projectRef?: ScopedProjectRef) => void;
 }) {
   const completeOnboarding = useCompleteOnboarding();
-  const migrationBridge = getT3DesktopMigrationBridge(
-    typeof window === "undefined" ? undefined : window.desktopBridge,
-  );
-  const [step, setStep] = useState<WizardStep>(() =>
-    migrationBridge ? "migration" : "connection",
-  );
+  const [step, setStep] = useState<WizardStep>("connection");
   const { environments } = useEnvironments();
   const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const autoSelectedComputers = useRef(new Set<EnvironmentId>());
@@ -148,7 +140,6 @@ export function WelcomeWizard({
     setStep("agents");
   };
   const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
-  const onboardingStages = step === "migration" ? MIGRATION_ONBOARDING_STAGES : ONBOARDING_STAGES;
   const finish = useCallback(
     (projectRef?: ScopedProjectRef) => {
       if (finishingPromiseRef.current !== null) return finishingPromiseRef.current;
@@ -209,7 +200,7 @@ export function WelcomeWizard({
           }
         >
           <WizardSteps
-            steps={onboardingStages}
+            steps={ONBOARDING_STAGES}
             currentStep={stageIndex}
             isStepDisabled={(index) => isImporting || index >= stageIndex}
             onStepChange={(index) => {
@@ -220,16 +211,7 @@ export function WelcomeWizard({
         </WizardHeader>
 
         <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "migration" ? (
-            migrationBridge ? (
-              <T3DesktopMigrationFlow
-                bridge={migrationBridge}
-                surface="onboarding"
-                onContinue={() => setStep("connection")}
-                onUnavailable={() => setStep("connection")}
-              />
-            ) : null
-          ) : step === "connection" ? (
+          {step === "connection" ? (
             <ConnectionStep
               expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
               selectedIds={selectedIds}

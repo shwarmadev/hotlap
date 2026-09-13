@@ -1,5 +1,5 @@
-/** Upstream T3 migrations expected in the shared effect_sql_migrations ledger. */
-export const t3MigrationManifest = [
+/** Upstream migrations expected in the shared effect_sql_migrations ledger. */
+export const upstreamMigrationManifest = [
   [1, "OrchestrationEvents"],
   [2, "OrchestrationCommandReceipts"],
   [3, "CheckpointDiffBlobs"],
@@ -53,4 +53,4 @@ export const t3MigrationManifest = [
   [51, "ProjectionThreadMessageContext"],
 ] as const;
 
-export type T3MigrationManifest = typeof t3MigrationManifest;
+export type UpstreamMigrationManifest = typeof upstreamMigrationManifest;

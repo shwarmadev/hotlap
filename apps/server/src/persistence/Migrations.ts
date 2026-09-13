@@ -10,7 +10,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
-import { t3MigrationManifest } from "@t3tools/shared/t3MigrationManifest";
+import { upstreamMigrationManifest } from "@t3tools/shared/upstreamMigrationManifest";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -130,11 +130,11 @@ const migrationEffects = {
   51: Migration0051,
 } as const;
 
-const migrationEntries = t3MigrationManifest.map(
+const migrationEntries = upstreamMigrationManifest.map(
   ([id, name]) => [id, name, migrationEffects[id]] as const,
 );
 
-export const migrationManifest = t3MigrationManifest;
+export const migrationManifest = upstreamMigrationManifest;
 
 const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
