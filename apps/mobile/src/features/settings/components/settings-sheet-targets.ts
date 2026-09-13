@@ -5,6 +5,7 @@ export type SettingsSheetTarget =
   | "SettingsCustomPrompts"
   | "SettingsProjectGrouping"
   | "SettingsClientStorage"
+  | "SettingsDiagnostics"
   | "SettingsOpenSourceLicenses"
   | "SettingsUsage";
 
