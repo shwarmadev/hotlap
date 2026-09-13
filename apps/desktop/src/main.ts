@@ -201,8 +201,8 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 );
 
 const desktopT3MigrationLayer = DesktopT3Migration.layer.pipe(
-  Layer.provideMerge(desktopBackendLayer),
-  Layer.provideMerge(desktopFoundationLayer),
+  Layer.provide(desktopBackendLayer),
+  Layer.provide(desktopFoundationLayer),
 );
 
 const desktopApplicationLayer = Layer.mergeAll(
