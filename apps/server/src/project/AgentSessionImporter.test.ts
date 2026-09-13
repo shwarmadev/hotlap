@@ -1,14 +1,17 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
+  type AgentSessionImportSource,
   AgentSessionImportProjectChangedError,
   CommandId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationProjectShell,
   type OrchestrationThread,
   type ProviderSendTurnInput,
@@ -169,14 +172,41 @@ const makeProjectedThread = (input: {
 
 const makeSnapshotsLayer = (input: {
   readonly project?: OrchestrationProjectShell;
+  readonly completedSources?: ReadonlyArray<{
+    readonly threadId: ThreadId;
+    readonly source: AgentSessionImportSource;
+  }>;
   readonly getThread?: (threadId: ThreadId) => Option.Option<OrchestrationThread>;
 }) =>
   Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
     getProjectShellById: () =>
       Effect.succeed(input.project === undefined ? Option.none() : Option.some(input.project)),
-    getImportedAgentSessionSources: () => Effect.succeed([]),
+    getImportedAgentSessionSources: () => Effect.succeed(input.completedSources ?? []),
     getThreadDetailById: (threadId) => Effect.succeed(input.getThread?.(threadId) ?? Option.none()),
   });
+
+const makeImportedAuditEvent = (threadId: ThreadId): OrchestrationEvent => ({
+  sequence: 1,
+  eventId: EventId.make(`audit-${threadId}`),
+  aggregateKind: "thread",
+  aggregateId: threadId,
+  type: "thread.message-sent",
+  occurredAt: "2026-08-24T10:00:00.000Z",
+  commandId: CommandId.make(`audit-command-${threadId}`),
+  causationEventId: null,
+  correlationId: CommandId.make(`audit-command-${threadId}`),
+  metadata: { historyImport: true },
+  payload: {
+    threadId,
+    messageId: MessageId.make(`${threadId}:000000`),
+    role: "user",
+    text: "Fix the bug",
+    turnId: null,
+    streaming: false,
+    createdAt: "2026-08-24T10:00:00.000Z",
+    updatedAt: "2026-08-24T10:00:00.000Z",
+  },
+});
 
 const runImport = (input: {
   readonly scanner: AgentSessionScanner.AgentSessionScanner["Service"];
@@ -206,6 +236,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         let scannedRoot: string | undefined;
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
+          reconcileCandidates: () => Stream.empty,
           recentThreads: (workspaceRoot) => {
             scannedRoot = workspaceRoot;
             return Stream.concat(
@@ -298,6 +329,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
             AgentSessionScanner.AgentSessionScanner,
             AgentSessionScanner.AgentSessionScanner.of({
               scan: Effect.die("must not scan a changed project"),
+              reconcileCandidates: () => Stream.empty,
               recentThreads,
             }),
           ),
@@ -322,6 +354,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
       Effect.gen(function* () {
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
+          reconcileCandidates: () => Stream.empty,
           recentThreads: () => Stream.succeed({ _tag: "Skipped" }),
         });
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
@@ -363,6 +396,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
+          reconcileCandidates: () => Stream.empty,
           recentThreads: () => Stream.fromIterable([makeThreadOutcome(makeThread("codex"))]),
         });
         const engine = OrchestrationEngine.OrchestrationEngineService.of({
@@ -443,6 +477,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
       Effect.gen(function* () {
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
+          reconcileCandidates: () => Stream.empty,
           recentThreads: () => Stream.fromIterable([makeThreadOutcome(makeThread("codex"))]),
         });
         const runningBinding: ProviderSessionDirectory.ProviderRuntimeBinding = {
@@ -491,6 +526,7 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
       Effect.gen(function* () {
         const scanner = AgentSessionScanner.AgentSessionScanner.of({
           scan: Effect.die("unused"),
+          reconcileCandidates: () => Stream.empty,
           recentThreads: () =>
             Stream.fromIterable([
               makeThreadOutcome({ ...makeThread("claudeAgent"), providerSessionId: "not-a-uuid" }),
@@ -538,6 +574,245 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         expect(commands).toHaveLength(0);
       }),
     );
+
+    it.effect("replaces untouched imported history after a parser upgrade", () =>
+      Effect.gen(function* () {
+        const original = makeThread("codex");
+        const fixed = {
+          ...original,
+          title: "Real user request",
+          messages: [
+            {
+              role: "user" as const,
+              text: "Real user request",
+              createdAt: "2026-08-24T10:00:30.000Z",
+            },
+          ],
+        };
+        const source = makeThreadOutcome(original).source;
+        const threadId = ThreadId.make("import:codex:codex-session");
+        const commands: Array<OrchestrationCommand> = [];
+        const recorded: Array<AgentSessionImportSource> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.empty,
+          reconcileCandidates: () =>
+            Stream.succeed({
+              _tag: "ReplaceImported",
+              thread: fixed,
+              source: { ...source, parserVersion: 1 },
+            }),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.succeed(makeImportedAuditEvent(threadId)),
+          getThreadReplayStats: () =>
+            Effect.succeed({ eventCount: 1, payloadBytes: 100, hasCreateEvent: true }),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(17),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not replace an existing binding"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: ({ source: next }) =>
+            Effect.sync(() => void recorded.push(next)),
+          getBinding: () =>
+            Effect.succeed(
+              Option.some({
+                threadId,
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "stopped" as const,
+                resumeCursor: { threadId: "codex-session" },
+                runtimePayload: { cwd: WORKSPACE_ROOT },
+              }),
+            ),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+        const existing = {
+          ...makeProjectedThread({ source: "codex", imported: true }),
+          title: "<recommended_plugins>",
+          settledOverride: "settled" as const,
+          settledAt: "2026-08-24T10:01:00.000Z",
+        };
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({
+            project: makeProject(),
+            completedSources: [{ threadId, source }],
+            getThread: () => Option.some(existing),
+          }),
+        });
+
+        expect(result).toEqual({ importedCount: 0, skippedCount: 0, repairedCount: 1 });
+        expect(commands).toMatchObject([
+          {
+            type: "thread.history.reconcile",
+            threadId,
+            snapshotSequence: 17,
+            action: {
+              type: "replaceHistory",
+              title: "Real user request",
+              messages: [{ role: "user", text: "Real user request" }],
+            },
+          },
+        ]);
+        expect(recorded).toMatchObject([{ parserVersion: 1 }]);
+      }),
+    );
+
+    it.effect("archives untouched imported Codex subagent threads", () =>
+      Effect.gen(function* () {
+        const original = makeThread("codex");
+        const source = makeThreadOutcome(original).source;
+        const threadId = ThreadId.make("import:codex:codex-session");
+        const commands: Array<OrchestrationCommand> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.empty,
+          reconcileCandidates: () =>
+            Stream.succeed({
+              _tag: "ArchiveImported",
+              source: { ...source, parserVersion: 1 },
+            }),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.succeed(makeImportedAuditEvent(threadId)),
+          getThreadReplayStats: () =>
+            Effect.succeed({ eventCount: 1, payloadBytes: 100, hasCreateEvent: true }),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(23),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not replace an existing binding"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.void,
+          getBinding: () =>
+            Effect.succeed(
+              Option.some({
+                threadId,
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "stopped" as const,
+                resumeCursor: { threadId: "codex-session" },
+              }),
+            ),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+        const existing = {
+          ...makeProjectedThread({ source: "codex", imported: true }),
+          settledOverride: "settled" as const,
+          settledAt: "2026-08-24T10:01:00.000Z",
+        };
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({
+            project: makeProject(),
+            completedSources: [{ threadId, source }],
+            getThread: () => Option.some(existing),
+          }),
+        });
+
+        expect(result).toEqual({ importedCount: 0, skippedCount: 0, archivedCount: 1 });
+        expect(commands).toMatchObject([
+          {
+            type: "thread.history.reconcile",
+            threadId,
+            snapshotSequence: 23,
+            action: { type: "archiveExcluded" },
+          },
+        ]);
+      }),
+    );
+
+    it.effect("leaves imported threads alone after the user continues them", () =>
+      Effect.gen(function* () {
+        const original = makeThread("codex");
+        const source = makeThreadOutcome(original).source;
+        const currentSource = { ...source, size: 100, parserVersion: 1 };
+        const threadId = ThreadId.make("import:codex:codex-session");
+        const recorded: Array<AgentSessionImportSource> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () =>
+            Stream.succeed({
+              ...makeThreadOutcome(original),
+              source: currentSource,
+            }),
+          reconcileCandidates: () =>
+            Stream.succeed({
+              _tag: "ReplaceImported",
+              thread: original,
+              source: currentSource,
+            }),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: () => Effect.die("must not reconcile user-modified history"),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("must not audit blocked history"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.die("must not snapshot blocked history"),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("unused"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: ({ source: next }) =>
+            Effect.sync(() => void recorded.push(next)),
+          getBinding: () =>
+            Effect.succeed(
+              Option.some({
+                threadId,
+                provider: ProviderDriverKind.make("codex"),
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                status: "stopped" as const,
+                resumeCursor: { threadId: "codex-session" },
+              }),
+            ),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+        const existing = {
+          ...makeProjectedThread({ source: "codex", imported: true, includeFollowup: true }),
+          settledOverride: "settled" as const,
+          settledAt: "2026-08-24T10:02:00.000Z",
+        };
+
+        expect(
+          yield* runImport({
+            scanner,
+            engine,
+            directory,
+            snapshots: makeSnapshotsLayer({
+              project: makeProject(),
+              completedSources: [{ threadId, source }],
+              getThread: () => Option.some(existing),
+            }),
+          }),
+        ).toEqual({ importedCount: 0, skippedCount: 1 });
+        expect(recorded).toMatchObject([
+          {
+            size: 100,
+            parserReviewVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
+          },
+        ]);
+        expect(recorded[0]).not.toHaveProperty("parserVersion");
+      }),
+    );
   });
 });
 
@@ -552,6 +827,7 @@ const integrationThread = {
 };
 const integrationScanner = AgentSessionScanner.AgentSessionScanner.of({
   scan: Effect.die("unused"),
+  reconcileCandidates: () => Stream.empty,
   recentThreads: () => Stream.fromIterable([makeThreadOutcome(integrationThread)]),
 });
 const integrationServerConfig = ServerConfig.layerTest(process.cwd(), {
@@ -1000,6 +1276,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             AgentSessionScanner.AgentSessionScanner,
             AgentSessionScanner.AgentSessionScanner.of({
               scan: Effect.die("unused"),
+              reconcileCandidates: () => Stream.empty,
               recentThreads: () => Stream.succeed(makeThreadOutcome(sourceThread)),
             }),
           ),
@@ -1020,6 +1297,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       const threadId = ThreadId.make(`import:codex:${providerSessionId}`);
       const scanner = AgentSessionScanner.AgentSessionScanner.of({
         scan: Effect.die("unused"),
+        reconcileCandidates: () => Stream.empty,
         recentThreads: () =>
           Stream.succeed(
             makeThreadOutcome({ ...integrationThread, providerSessionId, title: "Binding race" }),
@@ -1114,6 +1392,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
       const threadId = ThreadId.make(`import:codex:${providerSessionId}`);
       const scanner = AgentSessionScanner.AgentSessionScanner.of({
         scan: Effect.die("unused"),
+        reconcileCandidates: () => Stream.empty,
         recentThreads: () =>
           Stream.succeed(
             makeThreadOutcome({ ...integrationThread, providerSessionId, title: "Turn race" }),

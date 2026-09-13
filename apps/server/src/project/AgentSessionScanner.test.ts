@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  type AgentSessionImportSource,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderDriverKind,
@@ -125,6 +126,19 @@ const runRecentThreads = (input: ScannerTestInput & { readonly workspaceRoot: st
     ),
   );
 
+const runReconcileCandidates = (
+  input: ScannerTestInput & {
+    readonly workspaceRoot: string;
+    readonly completedSources: ReadonlyArray<AgentSessionImportSource>;
+  },
+) =>
+  Effect.gen(function* () {
+    const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+    return yield* scanner
+      .reconcileCandidates(input.workspaceRoot, input.completedSources)
+      .pipe(Stream.runCollect, Effect.map(Array.from));
+  }).pipe(Effect.provide(makeScannerTestLayer(input)));
+
 const makeTempDir = Effect.fn("AgentSessionScanner.test.makeTempDir")(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.makeTempDirectoryScoped({ prefix });
@@ -143,6 +157,27 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   // Numeric utimes arguments are seconds, not milliseconds.
   const seconds = input.mtimeMs / 1000;
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
+});
+
+const sourceForTranscript = Effect.fn("AgentSessionScanner.test.sourceForTranscript")(function* (
+  input: Pick<
+    AgentSessionImportSource,
+    "provider" | "providerInstanceId" | "providerSessionId" | "filePath"
+  >,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const stats = yield* fileSystem.stat(input.filePath);
+  return {
+    ...input,
+    size: Number(stats.size),
+    mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
+    device: stats.dev,
+    inode: Option.getOrNull(stats.ino),
+    birthtimeMs: Option.match(stats.birthtime, {
+      onNone: () => null,
+      onSome: (date) => date.getTime(),
+    }),
+  } satisfies AgentSessionImportSource;
 });
 
 /** Claude session line: the first record carries the real `cwd`. */
@@ -279,6 +314,59 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             lastActiveAt: "2026-02-09T10:00:00.000Z",
             alreadyImported: false,
             git: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("excludes Codex subagents from project discovery counts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessions = path.join(codexHomePath, "sessions", "2026", "02", "09");
+
+        yield* writeTranscript({
+          filePath: path.join(sessions, "rollout-2026-02-09T10-00-00-root.jsonl"),
+          contents: codexRolloutLine(workspace),
+          mtimeMs: Date.parse("2026-02-09T10:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(sessions, "rollout-2026-02-09T11-00-00-subagent.jsonl"),
+          contents: `${JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "subagent",
+              cwd: workspace,
+              thread_source: "subagent",
+              source: { subagent: { thread_spawn: { depth: 1 } } },
+            },
+          })}\n`,
+          mtimeMs: Date.parse("2026-02-09T11:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(sessions, "rollout-2026-02-09T12-00-00-guardian.jsonl"),
+          contents: `${JSON.stringify({
+            type: "session_meta",
+            payload: {
+              id: "guardian",
+              cwd: workspace,
+              thread_source: "guardian_review",
+              source: { subagent: { other: "guardian" } },
+            },
+          })}\n`,
+          mtimeMs: Date.parse("2026-02-09T12:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates).toMatchObject([
+          {
+            path: workspace,
+            sources: ["codex"],
+            threadCount: 1,
+            lastActiveAt: "2026-02-09T10:00:00.000Z",
           },
         ]);
       }),
@@ -1511,6 +1599,65 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("does not let more than 100 Codex subagents consume the root import budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-subagent-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-subagent-budget-codex-");
+        const workspace = yield* makeTempDir("t3code-subagent-budget-workspace-");
+        const sessions = path.join(codexHomePath, "sessions", "2026", "08", "24");
+        for (let index = 0; index < 101; index++) {
+          yield* writeTranscript({
+            filePath: path.join(
+              sessions,
+              `rollout-subagent-${String(index).padStart(3, "0")}.jsonl`,
+            ),
+            contents: [
+              encodeTranscriptRecord({
+                type: "session_meta",
+                payload: {
+                  id: `subagent-${index}`,
+                  cwd: workspace,
+                  thread_source: "subagent",
+                },
+              }),
+              encodeTranscriptRecord({
+                type: "event_msg",
+                payload: { type: "user_message", message: "continue" },
+              }),
+            ].join("\n"),
+            mtimeMs: nowMs - index,
+          });
+        }
+        yield* writeTranscript({
+          filePath: path.join(sessions, "rollout-root.jsonl"),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "root-after-subagents", cwd: workspace, source: "vscode" },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Keep the real thread" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 1_000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads).toMatchObject([
+          { providerSessionId: "root-after-subagents", title: "Keep the real thread" },
+        ]);
+      }),
+    );
+
     it.effect("imports history recorded with a case alias", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -2609,6 +2756,290 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
   });
+
+  describe("reconcileCandidates", () => {
+    it.effect("re-reads stale completed imports outside the recent-session window", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-09-13T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+        const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+        const filePath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "07",
+          "01",
+          "rollout-stale.jsonl",
+        );
+        yield* writeTranscript({
+          filePath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "stale-root-session", cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-07-01T10:00:00.000Z",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [
+                  { type: "input_text", text: "<recommended_plugins>hidden</recommended_plugins>" },
+                ],
+                internal_chat_message_metadata_passthrough: {
+                  content_item_kinds: ["plugins.recommendations"],
+                },
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-07-01T10:01:00.000Z",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "Build the visible feature" }],
+                internal_chat_message_metadata_passthrough: {
+                  content_item_kinds: ["user.text"],
+                },
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: Date.parse("2026-07-01T10:02:00.000Z"),
+        });
+        const source = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "stale-root-session",
+          filePath,
+        });
+
+        const candidates = yield* runReconcileCandidates({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+          completedSources: [source],
+        });
+
+        expect(candidates).toMatchObject([
+          {
+            _tag: "ReplaceImported",
+            thread: {
+              title: "Build the visible feature",
+              messages: [{ role: "user", text: "Build the visible feature" }],
+            },
+            source: { parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+          },
+        ]);
+        expect(
+          yield* runReconcileCandidates({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            completedSources: [
+              { ...source, parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+            ],
+          }),
+        ).toEqual([]);
+      }),
+    );
+
+    it.effect("reconciles a completed transcript that grew after its original import", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+        const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+        const filePath = path.join(codexHomePath, "sessions", "2026", "09", "13", "rollout.jsonl");
+        const metadata = encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "growing-session", cwd: workspace },
+        });
+        yield* writeTranscript({
+          filePath,
+          contents: `${metadata}\n${encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message: "Original prompt" },
+          })}\n`,
+          mtimeMs: Date.parse("2026-09-13T10:00:00.000Z"),
+        });
+        const originalSource = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "growing-session",
+          filePath,
+        });
+        yield* writeTranscript({
+          filePath,
+          contents: `${metadata}\n${encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message: "Original prompt" },
+          })}\n${encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message: "Later prompt" },
+          })}\n`,
+          mtimeMs: Date.parse("2026-09-13T11:00:00.000Z"),
+        });
+
+        const candidates = yield* runReconcileCandidates({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+          completedSources: [originalSource],
+        });
+
+        expect(candidates).toMatchObject([
+          {
+            _tag: "ReplaceImported",
+            thread: { messages: [{ text: "Original prompt" }, { text: "Later prompt" }] },
+            source: { parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+          },
+        ]);
+        expect(candidates[0]?.source.size).toBeGreaterThan(originalSource.size);
+      }),
+    );
+
+    it.effect("does not reconsider imports already preserved by this parser version", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+        const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+        const filePath = path.join(codexHomePath, "sessions", "2026", "09", "13", "reviewed.jsonl");
+        yield* writeTranscript({
+          filePath,
+          contents: `${encodeTranscriptRecord({
+            type: "session_meta",
+            payload: { id: "reviewed-session", cwd: workspace },
+          })}\n`,
+          mtimeMs: Date.parse("2026-09-13T11:00:00.000Z"),
+        });
+        const source = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "reviewed-session",
+          filePath,
+        });
+
+        expect(
+          yield* runReconcileCandidates({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            completedSources: [
+              {
+                ...source,
+                parserReviewVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
+              },
+            ],
+          }),
+        ).toEqual([]);
+      }),
+    );
+
+    it.effect("archives stale imports that are subagents or conclusively metadata-only", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-09-13T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+        const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+        const filePath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "07",
+          "01",
+          "rollout-subagent.jsonl",
+        );
+        const metadataOnlyPath = path.join(
+          codexHomePath,
+          "sessions",
+          "2026",
+          "07",
+          "01",
+          "rollout-metadata-only.jsonl",
+        );
+        yield* writeTranscript({
+          filePath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              cwd: workspace,
+              payload: {
+                id: "stale-subagent",
+                cwd: workspace,
+                thread_source: "subagent",
+                source: { subagent: { thread_spawn: { depth: 1 } } },
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "continue" },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* writeTranscript({
+          filePath: metadataOnlyPath,
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "metadata-only", cwd: workspace, source: "vscode" },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [
+                  { type: "input_text", text: "<recommended_plugins>hidden</recommended_plugins>" },
+                ],
+                internal_chat_message_metadata_passthrough: {
+                  content_item_kinds: ["plugins.recommendations"],
+                },
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs - 1,
+        });
+        const source = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "stale-subagent",
+          filePath,
+        });
+        const metadataOnlySource = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "metadata-only",
+          filePath: metadataOnlyPath,
+        });
+
+        expect(
+          yield* runReconcileCandidates({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            completedSources: [source, metadataOnlySource],
+          }),
+        ).toMatchObject([
+          {
+            _tag: "ArchiveImported",
+            source: { parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+          },
+          {
+            _tag: "ArchiveImported",
+            source: { parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+          },
+        ]);
+      }),
+    );
+  });
 });
 
 describe("parseAgentSessionTranscript", () => {
@@ -2742,6 +3173,207 @@ describe("parseAgentSessionTranscript", () => {
       "Fix the actual bug",
       "Fixed",
     ]);
+  });
+
+  it("uses modern Codex content kinds to omit generated setup text", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "codex-session", cwd: "/project" },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "turn-1",
+              content_item_kinds: [
+                "plugins.recommendations",
+                "agents_md.instructions",
+                "environments.environment_context",
+              ],
+            },
+            content: [
+              { type: "input_text", text: "<recommended_plugins>hidden</recommended_plugins>" },
+            ],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "turn-1",
+              content_item_kinds: ["user.text", "user.image"],
+            },
+            content: [{ type: "input_text", text: "Fix the actual bug" }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "Fixed" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the actual bug");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "Fix the actual bug",
+      "Fixed",
+    ]);
+  });
+
+  it("skips modern Codex sessions containing only metadata user records", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "codex-session", cwd: "/project" },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "turn-1",
+              content_item_kinds: ["goal.internal_context"],
+            },
+            content: [{ type: "input_text", text: "Internal goal context" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toBeNull();
+  });
+
+  it("preserves legacy Codex response users when content kinds are missing or malformed", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: { id: "codex-session", source: "vscode" },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "turn-1",
+              content_item_kinds: "user.text",
+            },
+            content: [{ type: "input_text", text: "Keep malformed metadata text" }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-2" },
+            content: [{ type: "input_text", text: "Keep missing metadata text" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      "Keep malformed metadata text",
+      "Keep missing metadata text",
+    ]);
+  });
+
+  it.each([
+    { thread_source: "subagent", source: { subagent: { thread_spawn: { depth: 1 } } } },
+    { thread_source: "guardian_review", source: { subagent: { other: "guardian" } } },
+    { source: { subagent: "review" } },
+    { source: { subagent: "compact" } },
+    { source: { subagent: "memory_consolidation" } },
+  ])("does not parse structurally marked Codex subagent sessions", (subagentMetadata) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: {
+            id: "subagent-session",
+            cwd: "/project",
+            ...subagentMetadata,
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              content_item_kinds: ["user.text"],
+            },
+            content: [{ type: "input_text", text: "Review the parent work" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toBeNull();
+  });
+
+  it("keeps top-level Codex forks that only carry fork ancestry", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session_meta",
+          payload: {
+            id: "fork-session",
+            cwd: "/project",
+            forked_from_id: "parent-session",
+            parent_thread_id: "parent-session",
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            internal_chat_message_metadata_passthrough: {
+              content_item_kinds: ["user.text"],
+            },
+            content: [{ type: "input_text", text: "Continue this fork" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.providerSessionId).toBe("fork-session");
+    expect(thread?.title).toBe("Continue this fork");
   });
 
   it("keeps the canonical first prompt after long Codex transcripts are capped", () => {

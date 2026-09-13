@@ -2027,6 +2027,118 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       return events;
     }
 
+    case "thread.history.reconcile": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.action.type === "archiveExcluded") {
+        if (thread.archivedAt !== null || thread.deletedAt !== null) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Thread '${command.threadId}' must be active before imported history can be archived.`,
+          });
+        }
+        return {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.action.archivedAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.archived",
+          payload: {
+            threadId: command.threadId,
+            archivedAt: command.action.archivedAt,
+            updatedAt: command.action.archivedAt,
+          },
+        };
+      }
+
+      if (thread.projectId !== command.action.projectId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' changed projects before imported history reconciliation.`,
+        });
+      }
+      const events: Array<PlannedOrchestrationEvent> = [
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.action.createdAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.created",
+          payload: {
+            threadId: command.threadId,
+            projectId: command.action.projectId,
+            title: command.action.title,
+            modelSelection: command.action.modelSelection,
+            runtimeMode: command.action.runtimeMode,
+            interactionMode: command.action.interactionMode,
+            branch: command.action.branch,
+            worktreePath: command.action.worktreePath,
+            createdAt: command.action.createdAt,
+            updatedAt: command.action.createdAt,
+          },
+        },
+      ];
+      for (const message of command.action.messages) {
+        events.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: message.createdAt,
+            commandId: command.commandId,
+            metadata: { historyImport: true },
+          })),
+          type: "thread.message-sent",
+          payload: {
+            threadId: command.threadId,
+            messageId: message.messageId,
+            role: message.role,
+            text: message.text,
+            turnId: null,
+            streaming: false,
+            createdAt: message.createdAt,
+            updatedAt: message.createdAt,
+          },
+        });
+      }
+      const firstMessage = command.action.messages[0];
+      if (firstMessage === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Imported history reconciliation requires at least one message.",
+        });
+      }
+      const settledAt = command.action.messages.reduce(
+        (latest, message) =>
+          compareDateTimeStrings(message.createdAt, latest) > 0 ? message.createdAt : latest,
+        firstMessage.createdAt,
+      );
+      events.push({
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: settledAt,
+          commandId: command.commandId,
+          metadata: { historyImport: true },
+        })),
+        type: "thread.settled",
+        payload: {
+          threadId: command.threadId,
+          settledAt,
+          updatedAt: settledAt,
+        },
+      });
+      return events;
+    }
+
     case "thread.proposed-plan.upsert": {
       yield* requireThread({
         readModel,

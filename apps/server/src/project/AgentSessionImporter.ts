@@ -10,15 +10,18 @@ import {
   AgentSessionScanError,
   isImportedAgentSessionMessageId,
   MessageId,
+  type OrchestrationEvent,
   ProjectId,
   ProviderDriverKind,
   ThreadId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
   type OrchestrationThread,
+  type AgentSessionImportSource,
 } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -31,6 +34,42 @@ import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_IMPORTED_THREAD_AUDIT_EVENTS = 1_000;
+
+const ImportedResumeCursor = Schema.Struct({
+  threadId: Schema.String,
+  resume: Schema.optional(Schema.String),
+});
+const decodeImportedResumeCursor = Schema.decodeUnknownOption(ImportedResumeCursor);
+
+function bindingMatchesImportedSource(
+  binding: ProviderSessionDirectory.ProviderRuntimeBinding,
+  source: AgentSessionScanner.AgentSessionReconcileCandidate["source"],
+  threadId: ThreadId,
+): boolean {
+  if (
+    binding.threadId !== threadId ||
+    binding.provider !== source.provider ||
+    binding.providerInstanceId !== source.providerInstanceId ||
+    binding.status !== "stopped"
+  ) {
+    return false;
+  }
+  const cursor = decodeImportedResumeCursor(binding.resumeCursor);
+  if (Option.isNone(cursor)) return false;
+  return source.provider === "codex"
+    ? cursor.value.threadId === source.providerSessionId
+    : cursor.value.threadId === threadId && cursor.value.resume === source.providerSessionId;
+}
+
+function isImportedHistoryEvent(event: OrchestrationEvent): boolean {
+  return (
+    event.metadata.historyImport === true &&
+    (event.type === "thread.created" ||
+      event.type === "thread.message-sent" ||
+      event.type === "thread.settled")
+  );
+}
 
 class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
@@ -68,6 +107,18 @@ class AgentSessionThreadModifiedError extends Schema.TaggedError<AgentSessionThr
 
 function hasImportedHistory(thread: OrchestrationThread): boolean {
   return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
+}
+
+function importedSessionKey(source: AgentSessionImportSource): string {
+  return `${source.providerInstanceId}\0${source.providerSessionId}`;
+}
+
+function parserReviewedSource(source: AgentSessionImportSource): AgentSessionImportSource {
+  const { parserVersion: _parserVersion, ...identity } = source;
+  return {
+    ...identity,
+    parserReviewVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
+  };
 }
 
 function hasImportBlockingActivity(
@@ -135,6 +186,143 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   const importedThreadIds = new Set<ThreadId>();
   let importedCount = 0;
   let skippedCount = 0;
+  let repairedCount = 0;
+  let archivedCount = 0;
+  const staleSessionKeys = new Set(
+    completedSources
+      .map((entry) => entry.source)
+      .filter(
+        (source) =>
+          source.parserVersion !== AgentSessionScanner.AGENT_SESSION_PARSER_VERSION &&
+          source.parserReviewVersion !== AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
+      )
+      .map(importedSessionKey),
+  );
+  const reconciledSessionKeys = new Set<string>();
+
+  const preserveModifiedImport = Effect.fn("AgentSessionImporter.preserveModifiedImport")(
+    function* (threadId: ThreadId, source: AgentSessionImportSource) {
+      yield* directory.recordImportedTranscript({
+        threadId,
+        source: parserReviewedSource(source),
+      });
+    },
+  );
+
+  yield* Stream.runForEach(
+    scanner.reconcileCandidates(
+      workspaceRoot,
+      completedSources.map((entry) => entry.source),
+    ),
+    (candidate) =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make(
+          `import:${candidate.source.providerInstanceId}:${candidate.source.providerSessionId}`,
+        );
+        const sessionKey = importedSessionKey(candidate.source);
+        const reconciled = yield* Effect.gen(function* () {
+          const existingThread = yield* snapshots.getThreadDetailById(threadId);
+          const existingBinding = yield* directory.getBinding(threadId);
+          if (
+            Option.isNone(existingThread) ||
+            existingThread.value.projectId !== input.projectId ||
+            !hasImportedHistory(existingThread.value) ||
+            Option.isNone(existingBinding) ||
+            !bindingMatchesImportedSource(existingBinding.value, candidate.source, threadId)
+          ) {
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+          if (hasImportBlockingActivity(existingThread.value, true)) {
+            yield* preserveModifiedImport(threadId, candidate.source);
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+
+          const snapshotSequence = yield* engine.latestSequence;
+          const stats = yield* engine.getThreadReplayStats({
+            threadId,
+            fromSequenceExclusive: 0,
+            toSequenceInclusive: snapshotSequence,
+            maxEvents: MAX_IMPORTED_THREAD_AUDIT_EVENTS,
+          });
+          if (stats.eventCount === 0 || stats.eventCount > MAX_IMPORTED_THREAD_AUDIT_EVENTS) {
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+          const events = yield* engine
+            .readThreadEvents({
+              threadId,
+              fromSequenceExclusive: 0,
+              toSequenceInclusive: snapshotSequence,
+              limit: MAX_IMPORTED_THREAD_AUDIT_EVENTS + 1,
+            })
+            .pipe(Stream.runCollect, Effect.map(Array.from));
+          if (events.length !== stats.eventCount) {
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+          if (!events.every(isImportedHistoryEvent)) {
+            yield* preserveModifiedImport(threadId, candidate.source);
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+
+          if (candidate._tag === "ArchiveImported") {
+            const archivedAt = DateTime.formatIso(yield* DateTime.now);
+            yield* engine.dispatch({
+              type: "thread.history.reconcile",
+              commandId: CommandId.make(yield* crypto.randomUUIDv4),
+              threadId,
+              snapshotSequence,
+              action: { type: "archiveExcluded", archivedAt },
+            });
+            yield* directory.recordImportedTranscript({ threadId, source: candidate.source });
+            return "archived" as const;
+          }
+
+          const provider = ProviderDriverKind.make(candidate.thread.source);
+          const model =
+            candidate.thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
+          yield* engine.dispatch({
+            type: "thread.history.reconcile",
+            commandId: CommandId.make(yield* crypto.randomUUIDv4),
+            threadId,
+            snapshotSequence,
+            action: {
+              type: "replaceHistory",
+              projectId: input.projectId,
+              title: candidate.thread.title,
+              modelSelection: { instanceId: candidate.thread.providerInstanceId, model },
+              runtimeMode: DEFAULT_RUNTIME_MODE,
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              branch: null,
+              worktreePath: null,
+              createdAt: candidate.thread.createdAt,
+              messages: candidate.thread.messages.map((message, index) => ({
+                messageId: MessageId.make(`${threadId}:${String(index).padStart(6, "0")}`),
+                role: message.role,
+                text: message.text,
+                createdAt: message.createdAt,
+              })),
+            },
+          });
+          yield* directory.recordImportedTranscript({ threadId, source: candidate.source });
+          return "repaired" as const;
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not reconcile an imported agent session", {
+              provider: candidate.source.provider,
+              sessionId: candidate.source.providerSessionId,
+              cause,
+            }).pipe(Effect.as(null)),
+          ),
+        );
+
+        if (reconciled === "repaired") {
+          reconciledSessionKeys.add(sessionKey);
+          repairedCount += 1;
+        } else if (reconciled === "archived") {
+          reconciledSessionKeys.add(sessionKey);
+          archivedCount += 1;
+        }
+      }),
+  );
 
   yield* Stream.runForEach(threads, (outcome) =>
     Effect.gen(function* () {
@@ -172,6 +360,13 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
         const existingThread = yield* snapshots.getThreadDetailById(threadId);
         const existingBinding = yield* directory.getBinding(threadId);
+
+        if (
+          staleSessionKeys.has(importedSessionKey(outcome.source)) &&
+          !reconciledSessionKeys.has(importedSessionKey(outcome.source))
+        ) {
+          return yield* new AgentSessionThreadModifiedError({ threadId });
+        }
 
         if (
           thread.source === "claudeAgent" &&
@@ -293,5 +488,10 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     }),
   );
 
-  return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  return {
+    importedCount,
+    skippedCount,
+    ...(repairedCount === 0 ? {} : { repairedCount }),
+    ...(archivedCount === 0 ? {} : { archivedCount }),
+  } satisfies AgentSessionImportResult;
 });

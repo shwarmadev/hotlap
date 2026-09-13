@@ -94,6 +94,7 @@ const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
 const MAX_IMPORT_RECORDS = 100_000;
+export const AGENT_SESSION_PARSER_VERSION = 1;
 
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
@@ -108,6 +109,10 @@ const TranscriptMessage = Schema.Struct({
 
 const CodexTurnMetadata = Schema.Struct({
   turn_id: Schema.optional(Schema.Union([Schema.String, Schema.Null])),
+});
+
+const CodexContentKindsMetadata = Schema.Struct({
+  content_item_kinds: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const TranscriptRecord = Schema.Struct({
@@ -129,6 +134,8 @@ const TranscriptRecord = Schema.Struct({
       message: Schema.optional(Schema.String),
       model: Schema.optional(Schema.String),
       cwd: Schema.optional(Schema.String),
+      thread_source: Schema.optional(Schema.String),
+      source: Schema.optional(Schema.Unknown),
       content: Schema.optional(Schema.Array(TranscriptContentBlock)),
       internal_chat_message_metadata_passthrough: Schema.optional(Schema.Unknown),
     }),
@@ -141,6 +148,7 @@ const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(
 const decodeTranscriptValue = Schema.decodeUnknownOption(TranscriptRecord);
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
+const decodeCodexContentKindsMetadata = Schema.decodeUnknownOption(CodexContentKindsMetadata);
 
 type DecodedTranscriptRecord = typeof TranscriptRecord.Type;
 
@@ -178,6 +186,17 @@ export type AgentSessionRecentThread =
   | { readonly _tag: "Duplicate"; readonly source: AgentSessionImportSource }
   | { readonly _tag: "Skipped" };
 
+export type AgentSessionReconcileCandidate =
+  | {
+      readonly _tag: "ReplaceImported";
+      readonly thread: AgentSessionThread;
+      readonly source: AgentSessionImportSource;
+    }
+  | {
+      readonly _tag: "ArchiveImported";
+      readonly source: AgentSessionImportSource;
+    };
+
 /** Service tag for agent session discovery. */
 export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
@@ -193,6 +212,11 @@ export class AgentSessionScanner extends Context.Service<
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    /** Re-read stale completed imports independently of normal recency and discovery limits. */
+    readonly reconcileCandidates: (
+      workspaceRoot: string,
+      completedSources: ReadonlyArray<AgentSessionImportSource>,
+    ) => Stream.Stream<AgentSessionReconcileCandidate, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
 
@@ -283,6 +307,57 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+function codexResponseUserVisibility(metadata: unknown): "legacy" | "visible" | "hidden" {
+  const decoded = decodeCodexContentKindsMetadata(metadata);
+  if (Option.isNone(decoded) || decoded.value.content_item_kinds === undefined) return "legacy";
+  return decoded.value.content_item_kinds.includes("user.text") ? "visible" : "hidden";
+}
+
+function isCodexSubagentPayload(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) return false;
+  const record = payload as Record<string, unknown>;
+  const threadSource =
+    typeof record.thread_source === "string" ? record.thread_source.trim().toLowerCase() : null;
+  if (threadSource === "subagent" || threadSource === "guardian_review") return true;
+  const source = record.source;
+  if (typeof source !== "object" || source === null) return false;
+  const subagent = (source as Record<string, unknown>).subagent;
+  if (typeof subagent === "string") {
+    return ["review", "compact", "memory_consolidation"].includes(subagent);
+  }
+  if (typeof subagent !== "object" || subagent === null) return false;
+  const subagentRecord = subagent as Record<string, unknown>;
+  return (
+    (typeof subagentRecord.thread_spawn === "object" && subagentRecord.thread_spawn !== null) ||
+    typeof subagentRecord.other === "string"
+  );
+}
+
+function isConclusiveModernCodexMetadataOnly(
+  records: ReadonlyArray<DecodedTranscriptRecord>,
+): boolean {
+  let hasModernUserRecord = false;
+  for (const record of records) {
+    if (record.type === "event_msg" && record.payload?.type === "user_message") {
+      if ((record.payload.message?.trim().length ?? 0) > 0) return false;
+      continue;
+    }
+    if (
+      record.type !== "response_item" ||
+      record.payload?.type !== "message" ||
+      record.payload.role !== "user"
+    ) {
+      continue;
+    }
+    const visibility = codexResponseUserVisibility(
+      record.payload.internal_chat_message_metadata_passthrough,
+    );
+    if (visibility !== "hidden") return false;
+    hasModernUserRecord = true;
+  }
+  return hasModernUserRecord;
+}
+
 /** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
@@ -299,6 +374,14 @@ function parseAgentSessionRecords(
   input: AgentSessionTranscriptMetadata,
   records: ReadonlyArray<DecodedTranscriptRecord>,
 ): AgentSessionThread | null {
+  if (
+    input.source === "codex" &&
+    records.some(
+      (record) => record.type === "session_meta" && isCodexSubagentPayload(record.payload),
+    )
+  ) {
+    return null;
+  }
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
   // timestamp text, so only transcript metadata can provide a resumable ID.
@@ -356,6 +439,12 @@ function parseAgentSessionRecords(
         record.payload?.type === "message" &&
         record.payload.role === "user"
       ) {
+        if (
+          codexResponseUserVisibility(record.payload.internal_chat_message_metadata_passthrough) ===
+          "hidden"
+        ) {
+          continue;
+        }
         const turnId = codexTurnId(record.payload.internal_chat_message_metadata_passthrough);
         const text = extractText(record.payload.content);
         if (turnId !== null && text.length > 0) {
@@ -467,6 +556,14 @@ function parseAgentSessionRecords(
       continue;
     }
 
+    if (
+      record.payload.role === "user" &&
+      codexResponseUserVisibility(record.payload.internal_chat_message_metadata_passthrough) ===
+        "hidden"
+    ) {
+      continue;
+    }
+
     const extractedText = extractText(record.payload.content);
     if (extractedText.length === 0) continue;
     if (record.payload.role === "user" && canonicalCodexResponseUserIndices.has(recordIndex)) {
@@ -562,8 +659,12 @@ function isT3ManagedWorktree(
   );
 }
 
-/** Extract `cwd` from a session-meta record, tolerating the shapes each CLI writes. */
-function extractCwd(line: string): string | null {
+type TranscriptLocation =
+  | { readonly _tag: "Cwd"; readonly cwd: string }
+  | { readonly _tag: "ExcludedSubagent" };
+
+/** Extract the session location while rejecting provider-spawned Codex subagents. */
+function extractTranscriptLocation(line: string): TranscriptLocation | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
@@ -573,15 +674,21 @@ function extractCwd(line: string): string | null {
   if (typeof parsed !== "object" || parsed === null) return null;
 
   const record = parsed as Record<string, unknown>;
-  if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
-    return record.cwd;
-  }
   // Codex nests session metadata under `payload`.
   const payload = record.payload;
   if (typeof payload === "object" && payload !== null) {
-    const nested = (payload as Record<string, unknown>).cwd;
+    if (isCodexSubagentPayload(payload)) {
+      return { _tag: "ExcludedSubagent" };
+    }
+  }
+  if (typeof record.cwd === "string" && record.cwd.trim().length > 0) {
+    return { _tag: "Cwd", cwd: record.cwd };
+  }
+  if (typeof payload === "object" && payload !== null) {
+    const nestedPayload = payload as Record<string, unknown>;
+    const nested = nestedPayload.cwd;
     if (typeof nested === "string" && nested.trim().length > 0) {
-      return nested;
+      return { _tag: "Cwd", cwd: nested };
     }
   }
   return null;
@@ -766,7 +873,9 @@ export const make = Effect.gen(function* () {
             };
             const readLastRecord = () => {
               const record = remaining + decoder.decode();
-              return record.length === 0 || !reserveRecord() ? null : extractCwd(record.trim());
+              return record.length === 0 || !reserveRecord()
+                ? null
+                : extractTranscriptLocation(record.trim());
             };
 
             while (bytesRead < maxBytes) {
@@ -793,8 +902,8 @@ export const make = Effect.gen(function* () {
 
               for (const line of lines) {
                 if (!reserveRecord()) return null;
-                const cwd = extractCwd(line.trim());
-                if (cwd !== null) return cwd;
+                const location = extractTranscriptLocation(line.trim());
+                if (location !== null) return location;
               }
             }
 
@@ -1055,8 +1164,9 @@ export const make = Effect.gen(function* () {
     >();
 
     for (const transcript of transcripts) {
-      const cwd = yield* readCwd(transcript, budget);
-      if (cwd === null) continue;
+      const location = yield* readCwd(transcript, budget);
+      if (location === null || location._tag === "ExcludedSubagent") continue;
+      const cwd = location.cwd;
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
@@ -1466,6 +1576,7 @@ export const make = Effect.gen(function* () {
             provider: parsedThread.source,
             providerInstanceId: parsedThread.providerInstanceId,
             providerSessionId: parsedThread.providerSessionId,
+            parserVersion: AGENT_SESSION_PARSER_VERSION,
           };
           const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
           if (importedSessions.has(sessionKey)) {
@@ -1489,7 +1600,126 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  const prepareReconcileCandidates = Effect.fn("AgentSessionScanner.prepareReconcileCandidates")(
+    function* (workspaceRoot: string, completedSources: ReadonlyArray<AgentSessionImportSource>) {
+      const root = path.resolve(expandHomePath(workspaceRoot));
+      const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
+      if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return [];
+      const rootIdentity = yield* directoryIdentity(root);
+      const bySession = Map.groupBy(
+        completedSources,
+        (source) => `${source.providerInstanceId}\0${source.providerSessionId}`,
+      );
+      const staleSources = Array.from(bySession.values()).flatMap((sources) => {
+        if (
+          sources.some(
+            (source) =>
+              source.parserVersion === AGENT_SESSION_PARSER_VERSION ||
+              source.parserReviewVersion === AGENT_SESSION_PARSER_VERSION,
+          )
+        ) {
+          return [];
+        }
+        const newest = sources.toSorted(
+          (left, right) => (right.mtimeMs ?? 0) - (left.mtimeMs ?? 0),
+        )[0];
+        return newest === undefined ? [] : [newest];
+      });
+
+      const candidates: Array<AgentSessionReconcileCandidate> = [];
+      let bytesRemaining = MAX_IMPORT_BYTES;
+      let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
+      let recordsRemaining = MAX_IMPORT_RECORDS;
+      for (const source of staleSources) {
+        if (transcriptsRemaining === 0 || bytesRemaining === 0 || recordsRemaining === 0) break;
+        const stats = yield* statOption(source.filePath);
+        if (Option.isNone(stats) || stats.value.type !== "File") continue;
+        const identity = transcriptIdentity(source.filePath, stats.value);
+        if (identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES || identity.size > bytesRemaining) {
+          continue;
+        }
+
+        transcriptsRemaining -= 1;
+        bytesRemaining -= identity.size;
+        const snapshot = yield* readTranscript(
+          source.filePath,
+          identity,
+          recordsRemaining,
+          source.provider,
+        );
+        if (snapshot === null) continue;
+        recordsRemaining -= snapshot.recordCount;
+
+        let snapshotCwd: string | null = null;
+        for (const record of snapshot.records) {
+          snapshotCwd = extractDecodedCwd(record);
+          if (snapshotCwd !== null) break;
+        }
+        if (snapshotCwd === null) continue;
+        const expandedCwd = expandHomePath(snapshotCwd.trim());
+        if (
+          !path.isAbsolute(expandedCwd) ||
+          (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
+        ) {
+          continue;
+        }
+
+        const currentSource: AgentSessionImportSource = {
+          ...source,
+          ...identity,
+          parserVersion: AGENT_SESSION_PARSER_VERSION,
+        };
+        if (
+          source.provider === "codex" &&
+          snapshot.records.some(
+            (record) => record.type === "session_meta" && isCodexSubagentPayload(record.payload),
+          )
+        ) {
+          candidates.push({ _tag: "ArchiveImported", source: currentSource });
+          continue;
+        }
+
+        const parsedThread = parseAgentSessionRecords(
+          {
+            source: source.provider,
+            providerInstanceId: source.providerInstanceId,
+            fallbackSessionId: path.basename(source.filePath, ".jsonl"),
+            lastActiveAtMs: identity.mtimeMs ?? 0,
+          },
+          snapshot.records,
+        );
+        if (parsedThread === null) {
+          if (
+            source.provider === "codex" &&
+            isConclusiveModernCodexMetadataOnly(snapshot.records)
+          ) {
+            candidates.push({ _tag: "ArchiveImported", source: currentSource });
+          }
+          continue;
+        }
+        if (
+          parsedThread.providerInstanceId !== source.providerInstanceId ||
+          parsedThread.providerSessionId !== source.providerSessionId
+        ) {
+          continue;
+        }
+        candidates.push({ _tag: "ReplaceImported", thread: parsedThread, source: currentSource });
+      }
+      return candidates;
+    },
+  );
+
+  const reconcileCandidates: AgentSessionScanner["Service"]["reconcileCandidates"] = (
+    workspaceRoot,
+    completedSources,
+  ) =>
+    Stream.unwrap(
+      prepareReconcileCandidates(workspaceRoot, completedSources).pipe(
+        Effect.map(Stream.fromIterable),
+      ),
+    );
+
+  return AgentSessionScanner.of({ scan, recentThreads, reconcileCandidates });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make);

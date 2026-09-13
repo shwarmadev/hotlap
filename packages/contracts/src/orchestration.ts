@@ -1454,6 +1454,38 @@ const ThreadHistoryImportCommand = Schema.Struct({
   ).check(Schema.isNonEmpty()),
 });
 
+const ThreadHistoryReconcileCommand = Schema.Struct({
+  type: Schema.Literal("thread.history.reconcile"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  snapshotSequence: NonNegativeInt,
+  action: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("replaceHistory"),
+      projectId: ProjectId,
+      title: TrimmedNonEmptyString,
+      modelSelection: ModelSelection,
+      runtimeMode: RuntimeMode,
+      interactionMode: ProviderInteractionMode,
+      branch: Schema.NullOr(TrimmedNonEmptyString),
+      worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+      createdAt: IsoDateTime,
+      messages: Schema.Array(
+        Schema.Struct({
+          messageId: MessageId,
+          role: Schema.Literals(["user", "assistant"]),
+          text: Schema.String,
+          createdAt: IsoDateTime,
+        }),
+      ).check(Schema.isNonEmpty()),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("archiveExcluded"),
+      archivedAt: IsoDateTime,
+    }),
+  ]),
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1534,6 +1566,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadHistoryImportCommand,
+  ThreadHistoryReconcileCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,

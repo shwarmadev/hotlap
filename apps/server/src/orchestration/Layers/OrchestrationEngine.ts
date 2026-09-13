@@ -190,6 +190,20 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           });
         }
 
+        if (
+          envelope.command.type === "thread.history.reconcile" &&
+          (yield* eventStore.hasEventAfter({
+            aggregateKind: "thread",
+            aggregateId: envelope.command.threadId,
+            sequenceExclusive: envelope.command.snapshotSequence,
+          }))
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} changed before imported history reconciliation`,
+          });
+        }
+
         // The decider compares the lookup inputs. Only recreation needs an
         // event check, since it can reset a thread to the same field values.
         if (
@@ -209,6 +223,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
         if (
           envelope.command.type === "thread.auto-settle" &&
+          threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: envelope.command.type,
+            detail: `thread ${envelope.command.threadId} has live background work`,
+          });
+        }
+
+        if (
+          envelope.command.type === "thread.history.reconcile" &&
           threadBackgroundLiveness.getThreadBackgroundLiveness(envelope.command.threadId) !== null
         ) {
           return yield* new OrchestrationCommandInvariantError({

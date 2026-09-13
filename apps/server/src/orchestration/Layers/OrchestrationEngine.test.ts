@@ -636,6 +636,38 @@ describe("OrchestrationEngine", () => {
           })
           .pipe(Effect.flip);
         expect(staleError._tag).toBe("OrchestrationCommandInvariantError");
+        const reconcileAction = {
+          type: "replaceHistory" as const,
+          projectId,
+          title: "Repaired import",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access" as const,
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+          messages: [
+            {
+              messageId: MessageId.make("import:codex:guarded:000000"),
+              role: "user" as const,
+              text: "Visible imported prompt",
+              createdAt: now(),
+            },
+          ],
+        };
+        const staleReconcileError = yield* engine
+          .dispatch({
+            type: "thread.history.reconcile",
+            commandId: CommandId.make("cmd-reconcile-stale-snapshot"),
+            threadId: guardedThreadId,
+            snapshotSequence,
+            action: reconcileAction,
+          })
+          .pipe(Effect.flip);
+        expect(staleReconcileError._tag).toBe("OrchestrationCommandInvariantError");
 
         const livenessSnapshotSequence = yield* engine.latestSequence;
         for (const [taskType, expectedLiveness] of [
@@ -664,6 +696,17 @@ describe("OrchestrationEngine", () => {
             })
             .pipe(Effect.flip);
           expect(livenessError._tag).toBe("OrchestrationCommandInvariantError");
+          expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
+          const reconcileLivenessError = yield* engine
+            .dispatch({
+              type: "thread.history.reconcile",
+              commandId: CommandId.make(`cmd-reconcile-${expectedLiveness}`),
+              threadId: liveThreadId,
+              snapshotSequence: livenessSnapshotSequence,
+              action: reconcileAction,
+            })
+            .pipe(Effect.flip);
+          expect(reconcileLivenessError._tag).toBe("OrchestrationCommandInvariantError");
           expect(yield* engine.latestSequence).toBe(livenessSnapshotSequence);
           backgroundLiveness.clearThreadLiveness(liveThreadId);
         }

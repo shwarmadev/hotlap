@@ -17,6 +17,10 @@ export const AgentSessionImportSource = Schema.Struct({
   device: Schema.Number,
   inode: Schema.NullOr(Schema.Number),
   birthtimeMs: Schema.NullOr(Schema.Number),
+  /** Missing on imports created before parser-aware reconciliation shipped. */
+  parserVersion: Schema.optional(NonNegativeInt),
+  /** Parser version that deliberately preserved a user-modified imported thread. */
+  parserReviewVersion: Schema.optional(NonNegativeInt),
 });
 export type AgentSessionImportSource = typeof AgentSessionImportSource.Type;
 
@@ -111,6 +115,8 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
+  repairedCount: Schema.optional(NonNegativeInt),
+  archivedCount: Schema.optional(NonNegativeInt),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 

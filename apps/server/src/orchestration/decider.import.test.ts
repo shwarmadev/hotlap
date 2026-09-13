@@ -506,4 +506,115 @@ it.layer(NodeServices.layer)("thread history import", (it) => {
       }
     }),
   );
+
+  it.effect("replaces imported history as a new projection incarnation", () =>
+    Effect.gen(function* () {
+      const createdAt = "2026-08-24T10:00:00.000Z";
+      const threadId = ThreadId.make("import:codex:reconcile-session");
+      const oldThread = yield* projectEvent(createEmptyReadModel(createdAt), {
+        sequence: 1,
+        eventId: EventId.make("event-reconcile-old-thread"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.created",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-reconcile-old-thread"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-reconcile-old-thread"),
+        metadata: { historyImport: true },
+        payload: {
+          threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "<recommended_plugins>",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      const readModel = yield* projectEvent(oldThread, {
+        sequence: 2,
+        eventId: EventId.make("event-reconcile-old-message"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        type: "thread.message-sent",
+        occurredAt: createdAt,
+        commandId: CommandId.make("command-reconcile-old-message"),
+        causationEventId: null,
+        correlationId: CommandId.make("command-reconcile-old-message"),
+        metadata: { historyImport: true },
+        payload: {
+          threadId,
+          messageId: MessageId.make(`${threadId}:000000`),
+          role: "user",
+          text: "<recommended_plugins>hidden</recommended_plugins>",
+          turnId: null,
+          streaming: false,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      const decided = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.history.reconcile",
+          commandId: CommandId.make("command-reconcile-history"),
+          threadId,
+          snapshotSequence: 2,
+          action: {
+            type: "replaceHistory",
+            projectId: ProjectId.make("project-1"),
+            title: "Real user request",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-08-24T10:01:00.000Z",
+            messages: [
+              {
+                messageId: MessageId.make(`${threadId}:000000`),
+                role: "user",
+                text: "Real user request",
+                createdAt: "2026-08-24T10:01:00.000Z",
+              },
+              {
+                messageId: MessageId.make(`${threadId}:000001`),
+                role: "assistant",
+                text: "Completed",
+                createdAt: "2026-08-24T10:02:00.000Z",
+              },
+            ],
+          },
+        },
+        readModel,
+      });
+      const events = Array.isArray(decided) ? decided : [decided];
+      expect(events.map((event) => event.type)).toEqual([
+        "thread.created",
+        "thread.message-sent",
+        "thread.message-sent",
+        "thread.settled",
+      ]);
+      expect(events.every((event) => event.metadata.historyImport === true)).toBe(true);
+
+      let projected = readModel;
+      for (const [index, event] of events.entries()) {
+        projected = yield* projectEvent(projected, { ...event, sequence: index + 3 });
+      }
+      expect(projected.threads).toHaveLength(1);
+      expect(projected.threads[0]).toMatchObject({
+        id: threadId,
+        title: "Real user request",
+        settledOverride: "settled",
+        messages: [
+          { role: "user", text: "Real user request" },
+          { role: "assistant", text: "Completed" },
+        ],
+      });
+    }),
+  );
 });
