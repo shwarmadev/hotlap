@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./t3MigrationManifest": {
+      "types": "./src/t3MigrationManifest.ts",
+      "import": "./src/t3MigrationManifest.ts"
+    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
