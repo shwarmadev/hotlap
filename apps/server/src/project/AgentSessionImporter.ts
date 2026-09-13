@@ -121,6 +121,13 @@ function parserReviewedSource(source: AgentSessionImportSource): AgentSessionImp
   };
 }
 
+function hasCurrentParserReview(source: AgentSessionImportSource): boolean {
+  return (
+    source.parserVersion === AgentSessionScanner.AGENT_SESSION_PARSER_VERSION ||
+    source.parserReviewVersion === AgentSessionScanner.AGENT_SESSION_PARSER_VERSION
+  );
+}
+
 function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,
@@ -188,15 +195,14 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   let skippedCount = 0;
   let repairedCount = 0;
   let archivedCount = 0;
+  const completedSourcesBySession = Map.groupBy(
+    completedSources.map((entry) => entry.source),
+    importedSessionKey,
+  );
   const staleSessionKeys = new Set(
-    completedSources
-      .map((entry) => entry.source)
-      .filter(
-        (source) =>
-          source.parserVersion !== AgentSessionScanner.AGENT_SESSION_PARSER_VERSION &&
-          source.parserReviewVersion !== AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
-      )
-      .map(importedSessionKey),
+    Array.from(completedSourcesBySession.entries()).flatMap(([sessionKey, sources]) =>
+      sources.some(hasCurrentParserReview) ? [] : [sessionKey],
+    ),
   );
   const reconciledSessionKeys = new Set<string>();
 
@@ -226,10 +232,21 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           if (
             Option.isNone(existingThread) ||
             existingThread.value.projectId !== input.projectId ||
-            !hasImportedHistory(existingThread.value) ||
+            !hasImportedHistory(existingThread.value)
+          ) {
+            return yield* new AgentSessionThreadModifiedError({ threadId });
+          }
+          if (candidate._tag === "PreserveImported") {
+            yield* preserveModifiedImport(threadId, candidate.source);
+            return "preserved" as const;
+          }
+          if (
             Option.isNone(existingBinding) ||
             !bindingMatchesImportedSource(existingBinding.value, candidate.source, threadId)
           ) {
+            if (Option.isSome(existingBinding)) {
+              yield* preserveModifiedImport(threadId, candidate.source);
+            }
             return yield* new AgentSessionThreadModifiedError({ threadId });
           }
           if (hasImportBlockingActivity(existingThread.value, true)) {
@@ -245,20 +262,26 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
             maxEvents: MAX_IMPORTED_THREAD_AUDIT_EVENTS,
           });
           if (stats.eventCount === 0 || stats.eventCount > MAX_IMPORTED_THREAD_AUDIT_EVENTS) {
+            yield* preserveModifiedImport(threadId, candidate.source);
             return yield* new AgentSessionThreadModifiedError({ threadId });
           }
-          const events = yield* engine
+          const audit = yield* engine
             .readThreadEvents({
               threadId,
               fromSequenceExclusive: 0,
               toSequenceInclusive: snapshotSequence,
               limit: MAX_IMPORTED_THREAD_AUDIT_EVENTS + 1,
             })
-            .pipe(Stream.runCollect, Effect.map(Array.from));
-          if (events.length !== stats.eventCount) {
-            return yield* new AgentSessionThreadModifiedError({ threadId });
-          }
-          if (!events.every(isImportedHistoryEvent)) {
+            .pipe(
+              Stream.runFold(
+                () => ({ eventCount: 0, allImported: true }),
+                (state, event: OrchestrationEvent) => ({
+                  eventCount: state.eventCount + 1,
+                  allImported: state.allImported && isImportedHistoryEvent(event),
+                }),
+              ),
+            );
+          if (audit.eventCount !== stats.eventCount || !audit.allImported) {
             yield* preserveModifiedImport(threadId, candidate.source);
             return yield* new AgentSessionThreadModifiedError({ threadId });
           }

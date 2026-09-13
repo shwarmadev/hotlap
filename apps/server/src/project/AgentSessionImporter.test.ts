@@ -738,6 +738,56 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
       }),
     );
 
+    it.effect("records stable unreconcilable transcripts as preserved", () =>
+      Effect.gen(function* () {
+        const original = makeThread("codex");
+        const source = { ...makeThreadOutcome(original).source, parserVersion: 1 };
+        const threadId = ThreadId.make("import:codex:codex-session");
+        const recorded: Array<AgentSessionImportSource> = [];
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.empty,
+          reconcileCandidates: () => Stream.succeed({ _tag: "PreserveImported", source }),
+        });
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: () => Effect.die("must not change preserved history"),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("must not audit unparseable history"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.die("must not snapshot unparseable history"),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("unused"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: ({ source: next }) =>
+            Effect.sync(() => void recorded.push(next)),
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        expect(
+          yield* runImport({
+            scanner,
+            engine,
+            directory,
+            snapshots: makeSnapshotsLayer({
+              project: makeProject(),
+              completedSources: [{ threadId, source: { ...source, parserVersion: undefined } }],
+              getThread: () =>
+                Option.some(makeProjectedThread({ source: "codex", imported: true })),
+            }),
+          }),
+        ).toEqual({ importedCount: 0, skippedCount: 0 });
+        expect(recorded).toMatchObject([
+          { parserReviewVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+        ]);
+        expect(recorded[0]).not.toHaveProperty("parserVersion");
+      }),
+    );
+
     it.effect("leaves imported threads alone after the user continues them", () =>
       Effect.gen(function* () {
         const original = makeThread("codex");

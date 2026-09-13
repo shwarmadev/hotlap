@@ -134,9 +134,12 @@ const runReconcileCandidates = (
 ) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-    return yield* scanner
-      .reconcileCandidates(input.workspaceRoot, input.completedSources)
-      .pipe(Stream.runCollect, Effect.map(Array.from));
+    return yield* scanner.reconcileCandidates(input.workspaceRoot, input.completedSources).pipe(
+      Stream.runCollect,
+      Effect.map((items): Array<AgentSessionScanner.AgentSessionReconcileCandidate> =>
+        Array.from(items),
+      ),
+    );
   }).pipe(Effect.provide(makeScannerTestLayer(input)));
 
 const makeTempDir = Effect.fn("AgentSessionScanner.test.makeTempDir")(function* (prefix: string) {
@@ -334,7 +337,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
         yield* writeTranscript({
           filePath: path.join(sessions, "rollout-2026-02-09T11-00-00-subagent.jsonl"),
-          contents: `${JSON.stringify({
+          contents: `${encodeTranscriptRecord({
             type: "session_meta",
             payload: {
               id: "subagent",
@@ -347,7 +350,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
         yield* writeTranscript({
           filePath: path.join(sessions, "rollout-2026-02-09T12-00-00-guardian.jsonl"),
-          contents: `${JSON.stringify({
+          contents: `${encodeTranscriptRecord({
             type: "session_meta",
             payload: {
               id: "guardian",
@@ -2930,14 +2933,56 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             codexHomePath,
             workspaceRoot: workspace,
             completedSources: [
+              source,
               {
                 ...source,
+                filePath: `${source.filePath}.copy`,
                 parserReviewVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION,
               },
             ],
           }),
         ).toEqual([]);
       }),
+    );
+
+    it.effect(
+      "marks stable unparseable transcripts for preservation without starving the batch",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+          const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+          const filePath = path.join(codexHomePath, "sessions", "2026", "09", "13", "empty.jsonl");
+          yield* writeTranscript({
+            filePath,
+            contents: `${encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: "empty-session", cwd: workspace },
+            })}\n`,
+            mtimeMs: Date.parse("2026-09-13T11:00:00.000Z"),
+          });
+          const source = yield* sourceForTranscript({
+            provider: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerSessionId: "empty-session",
+            filePath,
+          });
+
+          expect(
+            yield* runReconcileCandidates({
+              claudeHomePath,
+              codexHomePath,
+              workspaceRoot: workspace,
+              completedSources: [source],
+            }),
+          ).toMatchObject([
+            {
+              _tag: "PreserveImported",
+              source: { parserVersion: AgentSessionScanner.AGENT_SESSION_PARSER_VERSION },
+            },
+          ]);
+        }),
     );
 
     it.effect("archives stale imports that are subagents or conclusively metadata-only", () =>

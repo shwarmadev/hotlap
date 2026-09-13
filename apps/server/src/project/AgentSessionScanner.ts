@@ -195,6 +195,10 @@ export type AgentSessionReconcileCandidate =
   | {
       readonly _tag: "ArchiveImported";
       readonly source: AgentSessionImportSource;
+    }
+  | {
+      readonly _tag: "PreserveImported";
+      readonly source: AgentSessionImportSource;
     };
 
 /** Service tag for agent session discovery. */
@@ -1647,7 +1651,15 @@ export const make = Effect.gen(function* () {
           recordsRemaining,
           source.provider,
         );
-        if (snapshot === null) continue;
+        const currentSource: AgentSessionImportSource = {
+          ...source,
+          ...identity,
+          parserVersion: AGENT_SESSION_PARSER_VERSION,
+        };
+        if (snapshot === null) {
+          candidates.push({ _tag: "PreserveImported", source: currentSource });
+          continue;
+        }
         recordsRemaining -= snapshot.recordCount;
 
         let snapshotCwd: string | null = null;
@@ -1655,20 +1667,18 @@ export const make = Effect.gen(function* () {
           snapshotCwd = extractDecodedCwd(record);
           if (snapshotCwd !== null) break;
         }
-        if (snapshotCwd === null) continue;
+        if (snapshotCwd === null) {
+          candidates.push({ _tag: "PreserveImported", source: currentSource });
+          continue;
+        }
         const expandedCwd = expandHomePath(snapshotCwd.trim());
         if (
           !path.isAbsolute(expandedCwd) ||
           (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
         ) {
+          candidates.push({ _tag: "PreserveImported", source: currentSource });
           continue;
         }
-
-        const currentSource: AgentSessionImportSource = {
-          ...source,
-          ...identity,
-          parserVersion: AGENT_SESSION_PARSER_VERSION,
-        };
         if (
           source.provider === "codex" &&
           snapshot.records.some(
@@ -1694,6 +1704,8 @@ export const make = Effect.gen(function* () {
             isConclusiveModernCodexMetadataOnly(snapshot.records)
           ) {
             candidates.push({ _tag: "ArchiveImported", source: currentSource });
+          } else {
+            candidates.push({ _tag: "PreserveImported", source: currentSource });
           }
           continue;
         }
@@ -1701,6 +1713,7 @@ export const make = Effect.gen(function* () {
           parsedThread.providerInstanceId !== source.providerInstanceId ||
           parsedThread.providerSessionId !== source.providerSessionId
         ) {
+          candidates.push({ _tag: "PreserveImported", source: currentSource });
           continue;
         }
         candidates.push({ _tag: "ReplaceImported", thread: parsedThread, source: currentSource });
