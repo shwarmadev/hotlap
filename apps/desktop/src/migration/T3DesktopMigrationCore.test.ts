@@ -147,6 +147,54 @@ describe("T3DesktopMigrationCore", () => {
     assert.strictEqual(busyInspection.reason, "source-busy");
   });
 
+  it("rejects incomplete or malformed migration ledgers", async () => {
+    const incompletePaths = await makeFixture();
+    const incompleteDatabase = new DatabaseSync(
+      NodePath.join(incompletePaths.sourceStateDir, "state.sqlite"),
+    );
+    incompleteDatabase
+      .prepare("DELETE FROM effect_sql_migrations WHERE migration_id = ?")
+      .run(t3MigrationManifest.at(-1)?.[0]);
+    incompleteDatabase.close();
+
+    const incompleteInspection = await inspectT3DesktopMigration({
+      paths: incompletePaths,
+      platform: "darwin",
+      isPackaged: true,
+      usesDefaultDestinationHome: true,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(incompleteInspection.status, "blocked");
+    assert("reason" in incompleteInspection);
+    assert.strictEqual(incompleteInspection.reason, "schema-unsupported");
+
+    const malformedHotlapPaths = await makeFixture();
+    const malformedHotlapDatabase = new DatabaseSync(
+      NodePath.join(malformedHotlapPaths.sourceStateDir, "state.sqlite"),
+    );
+    malformedHotlapDatabase.exec(`
+      CREATE TABLE hotlap_sql_migrations (
+        migration_id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT
+      );
+    `);
+    malformedHotlapDatabase.close();
+
+    const malformedHotlapInspection = await inspectT3DesktopMigration({
+      paths: malformedHotlapPaths,
+      platform: "darwin",
+      isPackaged: true,
+      usesDefaultDestinationHome: true,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(malformedHotlapInspection.status, "blocked");
+    assert("reason" in malformedHotlapInspection);
+    assert.strictEqual(malformedHotlapInspection.reason, "schema-unsupported");
+  });
+
   it("copies only durable state and rejects unknown source entries", async () => {
     const paths = await makeFixture();
     await mkdir(NodePath.join(paths.sourceStateDir, "attachments"));

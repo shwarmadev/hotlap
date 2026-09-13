@@ -222,6 +222,7 @@ function validateMigrationLedger(
   if (rows.length === 0) return false;
 
   let expectedIndex = 0;
+  let acceptedLegacyHotlapMigration = false;
   for (const row of rows) {
     const expected = manifest[expectedIndex];
     if (expected && row.id === expected[0] && row.name === expected[1]) {
@@ -236,20 +237,22 @@ function validateMigrationLedger(
       hasColumn(database, "projection_threads", "forked_from_thread_id") &&
       hasColumn(database, "projection_threads", "forked_from_message_id")
     ) {
+      acceptedLegacyHotlapMigration = true;
       continue;
     }
     return false;
   }
+  if (expectedIndex !== manifest.length) return false;
 
   if (hasTable(database, "hotlap_sql_migrations")) {
     const hotlapRows = database
       .prepare("SELECT migration_id AS id, name FROM hotlap_sql_migrations ORDER BY migration_id")
       .all() as Array<{ readonly id: number; readonly name: string }>;
     if (
-      hotlapRows.some(
-        (row, index) =>
-          row.id !== index + 1 || row.id !== 1 || row.name !== "ProjectionThreadForks",
-      )
+      acceptedLegacyHotlapMigration ||
+      hotlapRows.length !== 1 ||
+      hotlapRows[0]?.id !== 1 ||
+      hotlapRows[0].name !== "ProjectionThreadForks"
     ) {
       return false;
     }
@@ -581,9 +584,7 @@ async function moveAside(path: string, targetRoot: string, name: string): Promis
   await syncDirectory(NodePath.dirname(path));
 }
 
-export async function recoverT3DesktopMigration(
-  paths: T3DesktopMigrationPaths,
-): Promise<{
+export async function recoverT3DesktopMigration(paths: T3DesktopMigrationPaths): Promise<{
   readonly status: "none" | "recovered" | "blocked";
   readonly reason?: "recovery-required";
 }> {
