@@ -83,6 +83,9 @@ export class ServerConfig extends Context.Service<
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
+    /** Original T3 Code state root from a completed Hotlap desktop migration.
+        Asset access uses it only to relocate durable attachment and browser-artifact paths. */
+    readonly legacyAssetStateDir?: string | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly resourceMonitorPath?: string | undefined;

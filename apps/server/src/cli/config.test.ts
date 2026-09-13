@@ -24,6 +24,16 @@ const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
+const encodeT3DesktopMigrationReceipt = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      version: Schema.Int,
+      sourceStateDir: Schema.String,
+      completedAt: Schema.optional(Schema.String),
+      pairingTransfer: Schema.optional(Schema.String),
+    }),
+  ),
+);
 
 const makeDesktopBootstrap = (
   overrides: Partial<DesktopBackendBootstrapValue> = {},
@@ -418,6 +428,103 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         expect(yield* fs.exists(directory)).toBe(true);
       }
       expect(resolved.cwd).toBe(path.resolve(customCwd));
+    }),
+  );
+
+  it.effect("loads the completed desktop migration's legacy asset root", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "hotlap-migrated-config-" });
+      const baseDir = path.join(parent, ".hotlap");
+      const sourceStateDir = path.join(parent, ".t3", "userdata");
+      const receiptDir = path.join(baseDir, "migrations", "t3-desktop");
+      yield* fs.makeDirectory(receiptDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(receiptDir, "completed.json"),
+        encodeT3DesktopMigrationReceipt({
+          version: 1,
+          completedAt: "2026-09-13T00:00:00.000Z",
+          pairingTransfer: "preserved",
+          sourceStateDir,
+        }),
+      );
+
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("desktop"),
+          port: Option.some(4888),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.none(),
+          noBrowser: Option.none(),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+          tailscaleServeEnabled: Option.none(),
+          tailscaleServePort: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      assert.equal(resolved.legacyAssetStateDir, sourceStateDir);
+    }),
+  );
+
+  it.effect("ignores invalid desktop migration receipts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "hotlap-invalid-receipt-" });
+      const baseDir = path.join(parent, ".hotlap");
+      const receiptDir = path.join(baseDir, "migrations", "t3-desktop");
+      const receiptPath = path.join(receiptDir, "completed.json");
+      yield* fs.makeDirectory(receiptDir, { recursive: true });
+      const flags = {
+        mode: Option.some("desktop" as const),
+        port: Option.some(4888),
+        host: Option.none(),
+        baseDir: Option.some(baseDir),
+        cwd: Option.none(),
+        devUrl: Option.none(),
+        noBrowser: Option.none(),
+        bootstrapFd: Option.none(),
+        autoBootstrapProjectFromCwd: Option.none(),
+        logWebSocketEvents: Option.none(),
+        tailscaleServeEnabled: Option.none(),
+        tailscaleServePort: Option.none(),
+      };
+      const configLayer = Layer.mergeAll(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+        NetService.layer,
+      );
+
+      for (const invalidReceipt of [
+        "not json",
+        encodeT3DesktopMigrationReceipt({
+          version: 2,
+          sourceStateDir: path.join(parent, ".t3", "userdata"),
+        }),
+        encodeT3DesktopMigrationReceipt({ version: 1, sourceStateDir: ".t3/userdata" }),
+        encodeT3DesktopMigrationReceipt({
+          version: 1,
+          sourceStateDir: path.join(parent, "other", "userdata"),
+        }),
+      ]) {
+        yield* fs.writeFileString(receiptPath, invalidReceipt);
+        const resolved = yield* resolveServerConfig(flags, Option.none()).pipe(
+          Effect.provide(configLayer),
+        );
+        assert.isUndefined(resolved.legacyAssetStateDir);
+      }
     }),
   );
 

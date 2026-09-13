@@ -83,6 +83,83 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("serves migrated browser artifacts through their legacy T3 Code paths", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const legacyRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-assets-" });
+      const legacyAssetStateDir = path.join(legacyRoot, ".t3", "userdata");
+      const relativePath = path.join("nested", "browser-screenshot.png");
+      const currentPath = path.join(config.browserArtifactsDir, relativePath);
+      yield* fs.makeDirectory(path.dirname(currentPath), { recursive: true });
+      yield* fs.writeFileString(currentPath, "migrated screenshot");
+      const migratedConfig = ServerConfig.make({ ...config, legacyAssetStateDir });
+
+      const result = yield* issueAssetUrl({
+        resource: {
+          _tag: "media-file",
+          threadId: ThreadId.make("thread-1"),
+          path: path.join(legacyAssetStateDir, "browser-artifacts", relativePath),
+        },
+      }).pipe(Effect.provideService(ServerConfig.ServerConfig, migratedConfig));
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const resolved = yield* resolveAsset(
+        suffix.slice(0, separator),
+        suffix.slice(separator + 1),
+      ).pipe(Effect.provideService(ServerConfig.ServerConfig, migratedConfig));
+
+      expect(resolved).toMatchObject({
+        kind: "file",
+        path: yield* fs.realPath(currentPath),
+        mimeType: "image/png",
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("serves migrated raw attachment paths without aliasing sibling state", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const legacyRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-attachment-" });
+      const legacyAssetStateDir = path.join(legacyRoot, ".t3", "userdata");
+      const currentPath = path.join(config.attachmentsDir, "thread-1-image.png");
+      yield* fs.writeFileString(currentPath, "migrated attachment");
+      const migratedConfig = ServerConfig.make({ ...config, legacyAssetStateDir });
+      const issue = (requestedPath: string) =>
+        issueAssetUrl({
+          resource: {
+            _tag: "media-file",
+            threadId: ThreadId.make("thread-1"),
+            path: requestedPath,
+          },
+        }).pipe(Effect.provideService(ServerConfig.ServerConfig, migratedConfig));
+
+      const migrated = yield* issue(
+        path.join(legacyAssetStateDir, "attachments", "thread-1-image.png"),
+      );
+      const suffix = migrated.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)).pipe(
+          Effect.provideService(ServerConfig.ServerConfig, migratedConfig),
+        ),
+      ).toMatchObject({ path: yield* fs.realPath(currentPath) });
+
+      for (const outsideAllowedRoots of [
+        path.join(legacyAssetStateDir, "secrets", "private.png"),
+        path.join(legacyAssetStateDir, "browser-artifacts-evil", "private.png"),
+        path.join(legacyAssetStateDir, "browser-artifacts"),
+        path.join(legacyAssetStateDir, "browser-artifacts", "..", "secrets", "private.png"),
+      ]) {
+        const error = yield* issue(outsideAllowedRoots).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("reports pixel dimensions from an image header and nothing for other files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

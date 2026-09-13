@@ -259,6 +259,35 @@ const readImageDimensionsFromHeader = (filePath: string) =>
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+/** Resolves only the two durable media roots copied by the desktop T3 migration.
+    The old root remains in immutable thread history; signed asset claims use the new path. */
+function remapMigratedStateMediaPath(
+  requestedPath: string,
+  config: ServerConfig.ServerConfig["Service"],
+  path: Path.Path,
+): string {
+  if (config.legacyAssetStateDir === undefined || !path.isAbsolute(requestedPath)) {
+    return requestedPath;
+  }
+
+  for (const [legacyDirectory, currentDirectory] of [
+    ["browser-artifacts", config.browserArtifactsDir],
+    ["attachments", config.attachmentsDir],
+  ] as const) {
+    const legacyRoot = path.join(config.legacyAssetStateDir, legacyDirectory);
+    const relative = path.relative(legacyRoot, requestedPath);
+    if (
+      relative.length > 0 &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relative)
+    ) {
+      return path.resolve(currentDirectory, relative);
+    }
+  }
+  return requestedPath;
+}
+
 const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
   function* (input: {
     readonly requestedPath: string;
@@ -412,7 +441,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 
   switch (input.resource._tag) {
     case "media-file": {
-      let requestedPath = input.resource.path;
+      const config = yield* ServerConfig.ServerConfig;
+      let requestedPath = remapMigratedStateMediaPath(input.resource.path, config, path);
       if (!path.isAbsolute(requestedPath)) {
         if (!input.workspaceRoot) {
           return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });

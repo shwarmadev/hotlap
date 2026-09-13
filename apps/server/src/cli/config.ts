@@ -17,6 +17,39 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 
+const CompletedT3DesktopMigrationReceipt = Schema.Struct({
+  version: Schema.Literal(1),
+  sourceStateDir: Schema.String,
+});
+const decodeCompletedT3DesktopMigrationReceipt = Schema.decodeUnknownOption(
+  Schema.fromJsonString(CompletedT3DesktopMigrationReceipt),
+);
+
+const loadLegacyAssetStateDir = Effect.fn("cli.config.loadLegacyAssetStateDir")(function* (
+  baseDir: string,
+  currentStateDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const receiptPath = path.join(baseDir, "migrations", "t3-desktop", "completed.json");
+  const raw = yield* fs.readFileString(receiptPath).pipe(Effect.option);
+  if (Option.isNone(raw)) return undefined;
+
+  const decoded = decodeCompletedT3DesktopMigrationReceipt(raw.value);
+  if (Option.isNone(decoded)) return undefined;
+  const sourceStateDir = decoded.value.sourceStateDir;
+  if (
+    !path.isAbsolute(sourceStateDir) ||
+    path.normalize(sourceStateDir) !== sourceStateDir ||
+    path.basename(sourceStateDir) !== "userdata" ||
+    path.basename(path.dirname(sourceStateDir)) !== ".t3" ||
+    path.normalize(sourceStateDir) === path.normalize(currentStateDir)
+  ) {
+    return undefined;
+  }
+  return sourceStateDir;
+});
+
 const modeFlag = Flag.choice("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
@@ -284,6 +317,7 @@ export const resolveServerConfig = (
       baseDirIsExplicit: Option.isSome(explicitBaseDir),
     });
     yield* ServerConfig.ensureServerDirectories(derivedPaths);
+    const legacyAssetStateDir = yield* loadLegacyAssetStateDir(baseDir, derivedPaths.stateDir);
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
     );
@@ -377,6 +411,7 @@ export const resolveServerConfig = (
       noBrowser,
       startupPresentation,
       desktopBootstrapToken,
+      ...(legacyAssetStateDir !== undefined ? { legacyAssetStateDir } : {}),
       desktopTelemetryFd,
       desktopTelemetryControlFd,
       resourceMonitorPath,
