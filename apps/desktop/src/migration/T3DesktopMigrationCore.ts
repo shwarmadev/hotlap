@@ -92,6 +92,9 @@ interface InspectInput {
 
 interface MigrateInput {
   readonly paths: T3DesktopMigrationPaths;
+  readonly platform: NodeJS.Platform;
+  readonly isPackaged: boolean;
+  readonly usesDefaultDestinationHome: boolean;
   readonly processProbe: T3DesktopProcessProbe;
   readonly migrationManifest: ReadonlyArray<readonly [id: number, name: string]>;
   readonly replaceExisting: boolean;
@@ -167,6 +170,24 @@ async function readDirectoryOrEmpty(path: string): Promise<ReadonlyArray<string>
     if (error.code === "ENOENT") return [];
     throw error;
   });
+}
+
+async function hasPlainSourceLayout(paths: T3DesktopMigrationPaths): Promise<boolean> {
+  try {
+    const [stateDirectory, database] = await Promise.all([
+      lstat(paths.sourceStateDir),
+      lstat(NodePath.join(paths.sourceStateDir, "state.sqlite")),
+    ]);
+    return (
+      stateDirectory.isDirectory() &&
+      !stateDirectory.isSymbolicLink() &&
+      database.isFile() &&
+      !database.isSymbolicLink()
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 async function syncDirectory(path: string): Promise<void> {
@@ -420,6 +441,9 @@ export async function inspectT3DesktopMigration(
   if (!(await pathExists(NodePath.join(input.paths.sourceStateDir, "state.sqlite")))) {
     return { status: "unavailable", reason: "source-missing" };
   }
+  if (!(await hasPlainSourceLayout(input.paths))) {
+    return { status: "blocked", reason: "unknown-source-entry" };
+  }
   const runtimeBlock = await sourceRuntimeBlockReason(input.paths, input.processProbe);
   if (runtimeBlock) return { status: "blocked", reason: runtimeBlock };
 
@@ -635,9 +659,9 @@ export async function recoverT3DesktopMigration(paths: T3DesktopMigrationPaths):
 export async function migrateT3DesktopData(input: MigrateInput): Promise<T3DesktopMigrationResult> {
   const inspection = await inspectT3DesktopMigration({
     paths: input.paths,
-    platform: "darwin",
-    isPackaged: true,
-    usesDefaultDestinationHome: true,
+    platform: input.platform,
+    isPackaged: input.isPackaged,
+    usesDefaultDestinationHome: input.usesDefaultDestinationHome,
     processProbe: input.processProbe,
     migrationManifest: input.migrationManifest,
   });

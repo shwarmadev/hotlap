@@ -3,6 +3,19 @@
 T3 Code shows a setup flow when you open a new installation or connect to the
 hosted app for the first time. Existing workspaces skip this flow.
 
+## Switch from T3 Code to Hotlap
+
+The packaged Hotlap app for macOS can move a workspace from the default T3 Code
+data location during setup or from **Settings → General**. Finish active turns
+and approvals, then quit T3 Code before starting the switch. Hotlap keeps
+recoverable backups and never merges or deletes an existing Hotlap workspace
+without confirmation.
+
+Projects, threads, attachments, settings, prompts, provider profiles, and local
+pairing identity move to Hotlap. Drafts, saved remote connections, and browser
+or cloud sessions do not. The switch is one-time, not ongoing synchronization;
+continue the migrated threads in Hotlap afterward.
+
 ## Connect your computers
 
 Select one or more computers to set up. If you opened T3 Code directly from a

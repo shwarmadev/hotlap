@@ -295,6 +295,9 @@ export const make = Effect.gen(function* () {
           try: () =>
             migrateT3DesktopData({
               paths,
+              platform: environment.platform,
+              isPackaged: environment.isPackaged,
+              usesDefaultDestinationHome,
               processProbe: macT3DesktopProcessProbe,
               migrationManifest: t3MigrationManifest,
               replaceExisting: request.replaceExisting,

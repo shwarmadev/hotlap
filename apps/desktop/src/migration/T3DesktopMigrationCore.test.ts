@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Isolated temporary homes exercise the real atomic migration filesystem boundary.
-import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -68,6 +68,12 @@ const closedProcessProbe = {
   isT3DesktopRunning: async () => false,
 };
 
+const supportedMigration = {
+  platform: "darwin",
+  isPackaged: true,
+  usesDefaultDestinationHome: true,
+} as const;
+
 describe("T3DesktopMigrationCore", () => {
   it("finds a closed, idle T3 desktop workspace and reports durable counts", async () => {
     const paths = await makeFixture();
@@ -86,6 +92,54 @@ describe("T3DesktopMigrationCore", () => {
       threadCount: 2,
       destinationHasData: false,
       pairingTransfer: "preserved",
+    });
+  });
+
+  it("enforces eligibility when migration is called directly", async () => {
+    const paths = await makeFixture();
+    let stopped = false;
+    const result = await migrateT3DesktopData({
+      paths,
+      platform: "linux",
+      isPackaged: true,
+      usesDefaultDestinationHome: true,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+      replaceExisting: false,
+      hooks: {
+        stopDestinationBackend: async () => {
+          stopped = true;
+        },
+        startAndValidateDestinationBackend: async () => undefined,
+        reloadDestinationSettings: async () => undefined,
+        restartPreviousDestinationBackend: async () => undefined,
+      },
+    });
+
+    assert.deepStrictEqual(result, { status: "blocked", reason: "unsupported-platform" });
+    assert.isFalse(stopped);
+    assert.strictEqual(
+      await readFile(NodePath.join(paths.sourceStateDir, "environment-id"), "utf8"),
+      "source-environment\n",
+    );
+  });
+
+  it("fails closed when the T3 state root is a symbolic link", async () => {
+    const paths = await makeFixture();
+    const relocatedState = NodePath.join(NodePath.dirname(paths.sourceBaseDir), "relocated-t3");
+    await rename(paths.sourceStateDir, relocatedState);
+    await symlink(relocatedState, paths.sourceStateDir, "dir");
+
+    const inspection = await inspectT3DesktopMigration({
+      paths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+
+    assert.deepStrictEqual(inspection, {
+      status: "blocked",
+      reason: "unknown-source-entry",
     });
   });
 
@@ -214,6 +268,7 @@ describe("T3DesktopMigrationCore", () => {
     const lifecycle: string[] = [];
     const result = await migrateT3DesktopData({
       paths,
+      ...supportedMigration,
       processProbe: closedProcessProbe,
       migrationManifest: t3MigrationManifest,
       replaceExisting: false,
@@ -253,6 +308,7 @@ describe("T3DesktopMigrationCore", () => {
     await writeFile(NodePath.join(unknownPaths.sourceStateDir, "future-state.bin"), "unknown");
     const unknownResult = await migrateT3DesktopData({
       paths: unknownPaths,
+      ...supportedMigration,
       processProbe: closedProcessProbe,
       migrationManifest: t3MigrationManifest,
       replaceExisting: false,
@@ -275,6 +331,7 @@ describe("T3DesktopMigrationCore", () => {
 
     const result = await migrateT3DesktopData({
       paths,
+      ...supportedMigration,
       processProbe: closedProcessProbe,
       migrationManifest: t3MigrationManifest,
       replaceExisting: true,
