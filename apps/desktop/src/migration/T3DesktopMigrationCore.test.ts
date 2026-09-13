@@ -95,6 +95,107 @@ describe("T3DesktopMigrationCore", () => {
     });
   });
 
+  it("does not treat a backend-initialized empty Hotlap home as existing work", async () => {
+    const paths = await makeFixture();
+    await mkdir(paths.destinationStateDir, { recursive: true });
+    const destinationDatabase = new DatabaseSync(
+      NodePath.join(paths.destinationStateDir, "state.sqlite"),
+    );
+    destinationDatabase.exec(`
+      CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT);
+      CREATE TABLE projection_threads (thread_id TEXT PRIMARY KEY, deleted_at TEXT);
+      CREATE TABLE auth_sessions (subject TEXT NOT NULL, method TEXT NOT NULL);
+      CREATE TABLE auth_pairing_links (id TEXT PRIMARY KEY);
+      INSERT INTO auth_sessions VALUES ('desktop-bootstrap', 'bearer-access-token');
+    `);
+    await writeFile(NodePath.join(paths.destinationStateDir, "environment-id"), "hotlap\n");
+    await writeFile(
+      NodePath.join(paths.destinationStateDir, "desktop-settings.json"),
+      '{"mainWindowBounds":{"x":0,"y":0,"width":1200,"height":800}}\n',
+    );
+    await mkdir(NodePath.join(paths.destinationStateDir, "attachments"));
+    await mkdir(NodePath.join(paths.destinationStateDir, "logs"));
+    await mkdir(NodePath.join(paths.destinationStateDir, "secrets"));
+    await writeFile(
+      NodePath.join(paths.destinationStateDir, "secrets", "server-signing-key.bin"),
+      "generated-signing-key",
+    );
+
+    const emptyInspection = await inspectT3DesktopMigration({
+      paths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(emptyInspection.status, "ready");
+    assert.isFalse(emptyInspection.status === "ready" && emptyInspection.destinationHasData);
+
+    destinationDatabase.exec("INSERT INTO projection_projects VALUES ('hotlap-project', NULL)");
+    destinationDatabase.close();
+
+    const populatedInspection = await inspectT3DesktopMigration({
+      paths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(populatedInspection.status, "ready");
+    assert.isTrue(populatedInspection.status === "ready" && populatedInspection.destinationHasData);
+  });
+
+  it("protects configuration-only Hotlap homes from replacement without consent", async () => {
+    const settingsPaths = await makeFixture();
+    await mkdir(settingsPaths.destinationStateDir, { recursive: true });
+    await writeFile(
+      NodePath.join(settingsPaths.destinationStateDir, "settings.json"),
+      '{"customPrompts":[{"name":"Ship","prompt":"Ship safely"}]}\n',
+    );
+    const settingsInspection = await inspectT3DesktopMigration({
+      paths: settingsPaths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(settingsInspection.status, "ready");
+    assert.isTrue(settingsInspection.status === "ready" && settingsInspection.destinationHasData);
+
+    const secretPaths = await makeFixture();
+    await mkdir(NodePath.join(secretPaths.destinationStateDir, "secrets"), { recursive: true });
+    await writeFile(
+      NodePath.join(secretPaths.destinationStateDir, "secrets", "provider-env-codex-main.bin"),
+      "encrypted-provider-token",
+    );
+    const secretInspection = await inspectT3DesktopMigration({
+      paths: secretPaths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(secretInspection.status, "ready");
+    assert.isTrue(secretInspection.status === "ready" && secretInspection.destinationHasData);
+
+    const pairedPaths = await makeFixture();
+    await mkdir(pairedPaths.destinationStateDir, { recursive: true });
+    const pairedDatabase = new DatabaseSync(
+      NodePath.join(pairedPaths.destinationStateDir, "state.sqlite"),
+    );
+    pairedDatabase.exec(`
+      CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT);
+      CREATE TABLE projection_threads (thread_id TEXT PRIMARY KEY, deleted_at TEXT);
+      CREATE TABLE auth_sessions (subject TEXT NOT NULL, method TEXT NOT NULL);
+      INSERT INTO auth_sessions VALUES ('one-time-token', 'bearer-access-token');
+    `);
+    pairedDatabase.close();
+    const pairedInspection = await inspectT3DesktopMigration({
+      paths: pairedPaths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(pairedInspection.status, "ready");
+    assert.isTrue(pairedInspection.status === "ready" && pairedInspection.destinationHasData);
+  });
+
   it("enforces eligibility when migration is called directly", async () => {
     const paths = await makeFixture();
     let stopped = false;
@@ -249,6 +350,26 @@ describe("T3DesktopMigrationCore", () => {
     assert.strictEqual(malformedHotlapInspection.reason, "schema-unsupported");
   });
 
+  it("accepts the exact legacy Hotlap fork migration", async () => {
+    const paths = await makeFixture();
+    const database = new DatabaseSync(NodePath.join(paths.sourceStateDir, "state.sqlite"));
+    database.exec(`
+      ALTER TABLE projection_threads ADD COLUMN fork_source_thread_id TEXT;
+      ALTER TABLE projection_threads ADD COLUMN fork_source_message_id TEXT;
+      INSERT INTO effect_sql_migrations VALUES (52, 'ProjectionThreadForks', 'now');
+    `);
+    database.close();
+
+    const inspection = await inspectT3DesktopMigration({
+      paths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+
+    assert.strictEqual(inspection.status, "ready");
+  });
+
   it("copies only durable state and rejects unknown source entries", async () => {
     const paths = await makeFixture();
     await mkdir(NodePath.join(paths.sourceStateDir, "attachments"));
@@ -262,6 +383,7 @@ describe("T3DesktopMigrationCore", () => {
       "omit",
     );
     await writeFile(NodePath.join(paths.sourceStateDir, "anonymous-id"), "omit");
+    await writeFile(NodePath.join(paths.sourceStateDir, "clerk-tokens.json"), "omit");
     await mkdir(NodePath.join(paths.sourceStateDir, "logs"));
     await writeFile(NodePath.join(paths.sourceStateDir, "logs", "server.log"), "omit");
 
@@ -298,6 +420,7 @@ describe("T3DesktopMigrationCore", () => {
       "server-signing-key.bin",
     ]);
     assert(!(await readdir(paths.destinationStateDir)).includes("anonymous-id"));
+    assert(!(await readdir(paths.destinationStateDir)).includes("clerk-tokens.json"));
     assert(!(await readdir(paths.destinationStateDir)).includes("logs"));
     const completion = JSON.parse(
       await readFile(NodePath.join(paths.migrationDir, "completed.json"), "utf8"),
@@ -329,6 +452,7 @@ describe("T3DesktopMigrationCore", () => {
     await mkdir(paths.destinationStateDir, { recursive: true });
     await writeFile(NodePath.join(paths.destinationStateDir, "old.txt"), "old-hotlap");
 
+    const lifecycle: string[] = [];
     const result = await migrateT3DesktopData({
       paths,
       ...supportedMigration,
@@ -336,16 +460,31 @@ describe("T3DesktopMigrationCore", () => {
       migrationManifest: t3MigrationManifest,
       replaceExisting: true,
       hooks: {
-        stopDestinationBackend: async () => undefined,
+        stopDestinationBackend: async () => {
+          lifecycle.push("stop");
+        },
         startAndValidateDestinationBackend: async () => {
+          lifecycle.push("validate");
           throw new Error("not ready");
         },
-        reloadDestinationSettings: async () => undefined,
-        restartPreviousDestinationBackend: async () => undefined,
+        reloadDestinationSettings: async () => {
+          lifecycle.push("reload-settings");
+        },
+        restartPreviousDestinationBackend: async () => {
+          lifecycle.push("restart-old");
+        },
       },
     });
 
     assert.strictEqual(result.status, "failed");
+    assert.deepStrictEqual(lifecycle, [
+      "stop",
+      "reload-settings",
+      "validate",
+      "stop",
+      "reload-settings",
+      "restart-old",
+    ]);
     assert.strictEqual(
       await readFile(NodePath.join(paths.destinationStateDir, "old.txt"), "utf8"),
       "old-hotlap",
@@ -354,6 +493,128 @@ describe("T3DesktopMigrationCore", () => {
       await readFile(NodePath.join(paths.sourceStateDir, "environment-id"), "utf8"),
       "source-environment\n",
     );
+  });
+
+  it("aborts when Hotlap changes before activation", async () => {
+    const paths = await makeFixture();
+    await mkdir(paths.destinationStateDir, { recursive: true });
+    const destinationDatabasePath = NodePath.join(paths.destinationStateDir, "state.sqlite");
+    const destinationDatabase = new DatabaseSync(destinationDatabasePath);
+    destinationDatabase.exec("CREATE TABLE changes(value TEXT NOT NULL)");
+    destinationDatabase.close();
+    let restarted = false;
+
+    const result = await migrateT3DesktopData({
+      paths,
+      ...supportedMigration,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+      replaceExisting: true,
+      hooks: {
+        stopDestinationBackend: async () => {
+          const changed = new DatabaseSync(destinationDatabasePath);
+          changed.exec("INSERT INTO changes VALUES ('remote-write')");
+          changed.close();
+        },
+        startAndValidateDestinationBackend: async () => undefined,
+        reloadDestinationSettings: async () => undefined,
+        restartPreviousDestinationBackend: async () => {
+          restarted = true;
+        },
+      },
+    });
+
+    assert.deepStrictEqual(result, { status: "blocked", reason: "destination-changed" });
+    assert.isTrue(restarted);
+    const restoredDestination = new DatabaseSync(destinationDatabasePath, { readOnly: true });
+    assert.deepStrictEqual(restoredDestination.prepare("SELECT value FROM changes").all(), [
+      { value: "remote-write" },
+    ]);
+    restoredDestination.close();
+  });
+
+  it("aborts if T3 Code reopens during staging", async () => {
+    const paths = await makeFixture();
+    let processChecks = 0;
+    const result = await migrateT3DesktopData({
+      paths,
+      ...supportedMigration,
+      processProbe: {
+        isPidAlive: () => false,
+        isT3DesktopRunning: async () => {
+          processChecks += 1;
+          return processChecks >= 4;
+        },
+      },
+      migrationManifest: t3MigrationManifest,
+      replaceExisting: false,
+      hooks: {
+        stopDestinationBackend: async () => undefined,
+        startAndValidateDestinationBackend: async () => undefined,
+        reloadDestinationSettings: async () => undefined,
+        restartPreviousDestinationBackend: async () => undefined,
+      },
+    });
+
+    assert.deepStrictEqual(result, { status: "blocked", reason: "recovery-required" });
+    assert.strictEqual(
+      await readFile(NodePath.join(paths.sourceStateDir, "environment-id"), "utf8"),
+      "source-environment\n",
+    );
+  });
+
+  it("finalizes a committed migration when its journal remains after a crash", async () => {
+    const paths = await makeFixture();
+    const runId = "committed-run";
+    const sourceBackup = NodePath.join(paths.sourceBaseDir, "hotlap-backups", runId, "userdata");
+    const destinationBackup = NodePath.join(paths.migrationDir, "backups", runId, "userdata");
+    const stageDir = NodePath.join(paths.migrationDir, "staging", runId, "userdata");
+    await mkdir(NodePath.dirname(sourceBackup), { recursive: true });
+    await rename(paths.sourceStateDir, sourceBackup);
+    await mkdir(paths.destinationStateDir, { recursive: true });
+    await writeFile(NodePath.join(paths.destinationStateDir, "imported.txt"), "imported");
+    await mkdir(destinationBackup, { recursive: true });
+    await writeFile(NodePath.join(destinationBackup, "old.txt"), "old-hotlap");
+    await mkdir(paths.migrationDir, { recursive: true });
+    await writeFile(
+      NodePath.join(paths.migrationDir, "journal.json"),
+      JSON.stringify({
+        version: 1,
+        runId,
+        phase: "destination-activated",
+        sourceBackup,
+        destinationBackup,
+        stageDir,
+      }),
+    );
+    await writeFile(
+      NodePath.join(paths.migrationDir, "completed.json"),
+      JSON.stringify({
+        version: 1,
+        completedAt: "2026-09-13T00:00:00.000Z",
+        pairingTransfer: "preserved",
+        sourceStateDir: paths.sourceStateDir,
+        sourceBackup,
+        destinationBackup,
+      }),
+    );
+
+    const recovery = await recoverT3DesktopMigration(paths);
+
+    assert.strictEqual(recovery.status, "recovered");
+    assert.strictEqual(
+      await readFile(NodePath.join(paths.destinationStateDir, "imported.txt"), "utf8"),
+      "imported",
+    );
+    assert.strictEqual(
+      await readFile(NodePath.join(destinationBackup, "old.txt"), "utf8"),
+      "old-hotlap",
+    );
+    assert.strictEqual(
+      await readFile(NodePath.join(sourceBackup, "environment-id"), "utf8"),
+      "source-environment\n",
+    );
+    assert(!(await readdir(paths.migrationDir)).includes("journal.json"));
   });
 
   it("recovers an interrupted activation without deleting colliding data", async () => {

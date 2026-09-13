@@ -135,6 +135,7 @@ const COPIED_DIRECTORIES = new Set([
 ]);
 const EXCLUDED_ENTRIES = new Set([
   "anonymous-id",
+  "clerk-tokens.json",
   "connection-catalog.json",
   "logs",
   "model-manifest.json",
@@ -170,6 +171,108 @@ async function readDirectoryOrEmpty(path: string): Promise<ReadonlyArray<string>
     if (error.code === "ENOENT") return [];
     throw error;
   });
+}
+
+async function destinationHasWorkspaceData(paths: T3DesktopMigrationPaths): Promise<boolean> {
+  const entries = await readDirectoryOrEmpty(paths.destinationStateDir);
+  if (entries.length === 0) return false;
+
+  for (const configFile of [
+    "clerk-tokens.json",
+    "client-settings.json",
+    "connection-catalog.json",
+    "keybindings.json",
+    "saved-environments.json",
+    "settings.json",
+  ]) {
+    if (entries.includes(configFile)) return true;
+  }
+
+  if (entries.includes("desktop-settings.json")) {
+    try {
+      const settings = JSON.parse(
+        await readFile(NodePath.join(paths.destinationStateDir, "desktop-settings.json"), "utf8"),
+      ) as unknown;
+      if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return true;
+      const baselineKeys = new Set(["mainWindowBounds", "mainWindowMaximized"]);
+      if (Object.keys(settings).some((key) => !baselineKeys.has(key))) return true;
+    } catch {
+      return true;
+    }
+  }
+
+  const databasePath = NodePath.join(paths.destinationStateDir, "state.sqlite");
+  if (await pathExists(databasePath)) {
+    let database: DatabaseSync;
+    try {
+      database = new DatabaseSync(databasePath, { readOnly: true });
+    } catch {
+      return true;
+    }
+    try {
+      if (!hasTable(database, "projection_projects") || !hasTable(database, "projection_threads")) {
+        return true;
+      }
+      if (
+        queryCount(database, "SELECT COUNT(*) AS count FROM projection_projects") > 0 ||
+        queryCount(database, "SELECT COUNT(*) AS count FROM projection_threads") > 0
+      ) {
+        return true;
+      }
+      if (
+        hasTable(database, "auth_sessions") &&
+        queryCount(
+          database,
+          "SELECT COUNT(*) AS count FROM auth_sessions WHERE subject != 'desktop-bootstrap' OR method != 'bearer-access-token'",
+        ) > 0
+      ) {
+        return true;
+      }
+      if (
+        hasTable(database, "auth_pairing_links") &&
+        queryCount(database, "SELECT COUNT(*) AS count FROM auth_pairing_links") > 0
+      ) {
+        return true;
+      }
+    } catch {
+      return true;
+    } finally {
+      database.close();
+    }
+  }
+
+  for (const directory of [
+    "attachments",
+    "browser-artifacts",
+    "device",
+    "providers",
+    "snap-shots",
+    "themes",
+  ]) {
+    if (
+      (await readDirectoryOrEmpty(NodePath.join(paths.destinationStateDir, directory))).length > 0
+    ) {
+      return true;
+    }
+  }
+
+  const secrets = await readDirectoryOrEmpty(NodePath.join(paths.destinationStateDir, "secrets"));
+  const baselineSecrets = new Set([
+    "asset-access-signing-key.bin",
+    "cloud-link-ed25519-key-pair.bin",
+    "server-signing-key.bin",
+  ]);
+  if (secrets.some((secret) => !baselineSecrets.has(secret))) return true;
+
+  const baselineEntries = new Set([
+    ...COPIED_DIRECTORIES,
+    ...EXCLUDED_ENTRIES,
+    "desktop-settings.json",
+    "environment-id",
+    "secrets",
+    "state.sqlite",
+  ]);
+  return entries.some((entry) => !baselineEntries.has(entry));
 }
 
 async function hasPlainSourceLayout(paths: T3DesktopMigrationPaths): Promise<boolean> {
@@ -255,8 +358,8 @@ function validateMigrationLedger(
       expectedIndex === manifest.length &&
       row.id === 52 &&
       row.name === "ProjectionThreadForks" &&
-      hasColumn(database, "projection_threads", "forked_from_thread_id") &&
-      hasColumn(database, "projection_threads", "forked_from_message_id")
+      hasColumn(database, "projection_threads", "fork_source_thread_id") &&
+      hasColumn(database, "projection_threads", "fork_source_message_id")
     ) {
       acceptedLegacyHotlapMigration = true;
       continue;
@@ -407,23 +510,45 @@ async function sourceRuntimeBlockReason(
   return probe.isPidAlive(runtime.pid) ? "source-running" : null;
 }
 
-async function readCompleted(
+interface CompletedMigrationReceipt {
+  readonly version: 1;
+  readonly completedAt: string;
+  readonly pairingTransfer: T3DesktopMigrationSummary["pairingTransfer"];
+  readonly sourceStateDir: string;
+  readonly sourceBackup: string;
+  readonly destinationBackup: string | null;
+}
+
+async function readCompletedReceipt(
   paths: T3DesktopMigrationPaths,
-): Promise<T3DesktopMigrationInspection | null> {
+): Promise<CompletedMigrationReceipt | "invalid" | null> {
   const receiptPath = NodePath.join(paths.migrationDir, COMPLETED_FILE);
   if (!(await pathExists(receiptPath))) return null;
   try {
     const value = JSON.parse(await readFile(receiptPath, "utf8")) as Record<string, unknown>;
     if (
       value.version === 1 &&
-      (value.pairingTransfer === "preserved" || value.pairingTransfer === "re-pair-required")
+      typeof value.completedAt === "string" &&
+      (value.pairingTransfer === "preserved" || value.pairingTransfer === "re-pair-required") &&
+      typeof value.sourceStateDir === "string" &&
+      typeof value.sourceBackup === "string" &&
+      (typeof value.destinationBackup === "string" || value.destinationBackup === null)
     ) {
-      return { status: "completed", pairingTransfer: value.pairingTransfer };
+      return value as unknown as CompletedMigrationReceipt;
     }
   } catch {
     // A corrupt completion marker is recovery state, never permission to rerun.
   }
-  return { status: "blocked", reason: "recovery-required" };
+  return "invalid";
+}
+
+async function readCompleted(
+  paths: T3DesktopMigrationPaths,
+): Promise<T3DesktopMigrationInspection | null> {
+  const receipt = await readCompletedReceipt(paths);
+  if (receipt === null) return null;
+  if (receipt === "invalid") return { status: "blocked", reason: "recovery-required" };
+  return { status: "completed", pairingTransfer: receipt.pairingTransfer };
 }
 
 export async function inspectT3DesktopMigration(
@@ -453,14 +578,13 @@ export async function inspectT3DesktopMigration(
   );
   if ("blocked" in summary) return { status: "blocked", reason: summary.reason };
 
-  const destinationEntries = await readDirectoryOrEmpty(input.paths.destinationStateDir);
   const secretNames = await readDirectoryOrEmpty(
     NodePath.join(input.paths.sourceStateDir, "secrets"),
   );
   return {
     status: "ready",
     ...summary,
-    destinationHasData: destinationEntries.length > 0,
+    destinationHasData: await destinationHasWorkspaceData(input.paths),
     pairingTransfer: secretNames.includes("server-signing-key.bin")
       ? "preserved"
       : "re-pair-required",
@@ -608,6 +732,84 @@ async function moveAside(path: string, targetRoot: string, name: string): Promis
   await syncDirectory(NodePath.dirname(path));
 }
 
+interface DestinationDatabaseObserver {
+  readonly databasePath: string;
+  readonly database: DatabaseSync | null;
+  readonly dataVersion: number | null;
+  readonly device: number | null;
+  readonly inode: number | null;
+}
+
+function readDataVersion(database: DatabaseSync): number {
+  const row = database.prepare("PRAGMA data_version").get() as
+    | { readonly data_version: number }
+    | undefined;
+  return row?.data_version ?? 0;
+}
+
+async function observeDestinationDatabase(
+  paths: T3DesktopMigrationPaths,
+): Promise<DestinationDatabaseObserver> {
+  const databasePath = NodePath.join(paths.destinationStateDir, "state.sqlite");
+  if (!(await pathExists(databasePath))) {
+    return { databasePath, database: null, dataVersion: null, device: null, inode: null };
+  }
+  const identity = await stat(databasePath);
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  return {
+    databasePath,
+    database,
+    dataVersion: readDataVersion(database),
+    device: identity.dev,
+    inode: identity.ino,
+  };
+}
+
+async function destinationDatabaseChanged(observer: DestinationDatabaseObserver): Promise<boolean> {
+  if (observer.database === null) return pathExists(observer.databasePath);
+  if (!(await pathExists(observer.databasePath))) return true;
+  const identity = await stat(observer.databasePath);
+  return (
+    identity.dev !== observer.device ||
+    identity.ino !== observer.inode ||
+    readDataVersion(observer.database) !== observer.dataVersion
+  );
+}
+
+async function sourceReopenedAfterQuarantine(input: {
+  readonly paths: T3DesktopMigrationPaths;
+  readonly sourceBackup: string;
+  readonly processProbe: T3DesktopProcessProbe;
+}): Promise<boolean> {
+  if (await pathExists(input.paths.sourceStateDir)) return true;
+  return (
+    (await sourceRuntimeBlockReason(
+      { ...input.paths, sourceStateDir: input.sourceBackup },
+      input.processProbe,
+    )) !== null
+  );
+}
+
+async function completionMatchesJournal(
+  paths: T3DesktopMigrationPaths,
+  journal: MigrationJournal,
+): Promise<boolean> {
+  const receipt = await readCompletedReceipt(paths);
+  if (receipt === null || receipt === "invalid" || journal.phase !== "destination-activated") {
+    return false;
+  }
+  const expectedDestinationBackup = (await pathExists(journal.destinationBackup))
+    ? journal.destinationBackup
+    : null;
+  return (
+    receipt.sourceStateDir === paths.sourceStateDir &&
+    receipt.sourceBackup === journal.sourceBackup &&
+    receipt.destinationBackup === expectedDestinationBackup &&
+    (await pathExists(paths.destinationStateDir)) &&
+    (await pathExists(journal.sourceBackup))
+  );
+}
+
 export async function recoverT3DesktopMigration(paths: T3DesktopMigrationPaths): Promise<{
   readonly status: "none" | "recovered" | "blocked";
   readonly reason?: "recovery-required";
@@ -616,6 +818,11 @@ export async function recoverT3DesktopMigration(paths: T3DesktopMigrationPaths):
   if (!(await pathExists(journalPath))) return { status: "none" };
   const journal = await readJournal(paths);
   if (journal === null) return { status: "blocked", reason: "recovery-required" };
+  if (await completionMatchesJournal(paths, journal)) {
+    await unlink(journalPath);
+    await syncDirectory(paths.migrationDir);
+    return { status: "recovered" };
+  }
 
   const sourceExists = await pathExists(paths.sourceStateDir);
   const sourceBackupExists = await pathExists(journal.sourceBackup);
@@ -673,6 +880,7 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
   if (inspection.destinationHasData && !input.replaceExisting) {
     return { status: "blocked", reason: "destination-changed" };
   }
+  const destinationObserver = await observeDestinationDatabase(input.paths);
 
   const runId =
     input.makeRunId?.() ??
@@ -682,6 +890,7 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
   let journal = journalBase;
   let destinationStopped = false;
   let activated = false;
+  let committed = false;
   let blockedReason: T3DesktopMigrationBlockedReason | null = null;
 
   try {
@@ -706,10 +915,14 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
     await syncDirectory(NodePath.dirname(input.paths.sourceStateDir));
     journal = await writeJournal(input.paths, journal, "source-quarantined");
     if (
-      (await pathExists(input.paths.sourceStateDir)) ||
-      (await input.processProbe.isT3DesktopRunning())
+      await sourceReopenedAfterQuarantine({
+        paths: input.paths,
+        sourceBackup: runPaths.sourceBackup,
+        processProbe: input.processProbe,
+      })
     ) {
-      return { status: "blocked", reason: "recovery-required" };
+      blockedReason = "recovery-required";
+      throw new Error("T3 Code reopened during migration.");
     }
 
     // Snapshot only after the source has been quarantined. An already-open T3
@@ -743,9 +956,23 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
     ) {
       throw new Error("The staged T3 Code data did not match its source.");
     }
+    if (
+      await sourceReopenedAfterQuarantine({
+        paths: input.paths,
+        sourceBackup: runPaths.sourceBackup,
+        processProbe: input.processProbe,
+      })
+    ) {
+      blockedReason = "recovery-required";
+      throw new Error("T3 Code reopened during migration.");
+    }
 
-    await input.hooks.stopDestinationBackend();
     destinationStopped = true;
+    await input.hooks.stopDestinationBackend();
+    if (await destinationDatabaseChanged(destinationObserver)) {
+      blockedReason = "destination-changed";
+      throw new Error("Hotlap changed while the migration was being prepared.");
+    }
     journal = await writeJournal(input.paths, journal, "destination-stopped");
 
     if (await pathExists(input.paths.destinationStateDir)) {
@@ -761,6 +988,16 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
 
     await input.hooks.reloadDestinationSettings();
     await input.hooks.startAndValidateDestinationBackend();
+    if (
+      await sourceReopenedAfterQuarantine({
+        paths: input.paths,
+        sourceBackup: runPaths.sourceBackup,
+        processProbe: input.processProbe,
+      })
+    ) {
+      blockedReason = "recovery-required";
+      throw new Error("T3 Code reopened during migration.");
+    }
     await writeJsonAtomically(NodePath.join(input.paths.migrationDir, COMPLETED_FILE), {
       version: 1,
       completedAt: (input.now?.() ?? new Date()).toISOString(),
@@ -771,10 +1008,15 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
         ? runPaths.destinationBackup
         : null,
     });
+    committed = true;
     await unlink(NodePath.join(input.paths.migrationDir, JOURNAL_FILE));
     await syncDirectory(input.paths.migrationDir);
     return { status: "completed", pairingTransfer: inspection.pairingTransfer };
   } catch (error) {
+    if (committed || (await completionMatchesJournal(input.paths, journal))) {
+      return { status: "completed", pairingTransfer: inspection.pairingTransfer };
+    }
+    let recoveryMessage: string | null = null;
     try {
       if (activated) {
         await input.hooks.stopDestinationBackend();
@@ -786,23 +1028,25 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
       }
       if (await pathExists(runPaths.destinationBackup)) {
         if (await pathExists(input.paths.destinationStateDir)) {
-          return { status: "failed", message: "Migration recovery needs manual attention." };
+          recoveryMessage = "Migration recovery needs manual attention.";
+        } else {
+          await rename(runPaths.destinationBackup, input.paths.destinationStateDir);
         }
-        await rename(runPaths.destinationBackup, input.paths.destinationStateDir);
       }
       if (await pathExists(runPaths.sourceBackup)) {
         if (await pathExists(input.paths.sourceStateDir)) {
-          return {
-            status: "failed",
-            message: "T3 Code reopened during migration; its backup was preserved.",
-          };
+          recoveryMessage = "T3 Code reopened during migration; its backup was preserved.";
+        } else {
+          await rename(runPaths.sourceBackup, input.paths.sourceStateDir);
         }
-        await rename(runPaths.sourceBackup, input.paths.sourceStateDir);
       }
+      if (activated) await input.hooks.reloadDestinationSettings();
       if (destinationStopped) await input.hooks.restartPreviousDestinationBackend();
-      await rm(NodePath.dirname(runPaths.stageDir), { recursive: true, force: true });
-      if (await pathExists(NodePath.join(input.paths.migrationDir, JOURNAL_FILE))) {
-        await unlink(NodePath.join(input.paths.migrationDir, JOURNAL_FILE));
+      if (recoveryMessage === null) {
+        await rm(NodePath.dirname(runPaths.stageDir), { recursive: true, force: true });
+        if (await pathExists(NodePath.join(input.paths.migrationDir, JOURNAL_FILE))) {
+          await unlink(NodePath.join(input.paths.migrationDir, JOURNAL_FILE));
+        }
       }
     } catch {
       return {
@@ -810,10 +1054,13 @@ export async function migrateT3DesktopData(input: MigrateInput): Promise<T3Deskt
         message: "Migration failed and requires recovery on next launch.",
       };
     }
+    if (recoveryMessage !== null) return { status: "failed", message: recoveryMessage };
     if (blockedReason !== null) return { status: "blocked", reason: blockedReason };
     return {
       status: "failed",
       message: error instanceof Error ? error.message : "T3 Code migration failed.",
     };
+  } finally {
+    destinationObserver.database?.close();
   }
 }
