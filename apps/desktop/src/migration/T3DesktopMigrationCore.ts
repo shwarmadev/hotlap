@@ -401,46 +401,6 @@ function databaseSummary(
       if (!hasTable(database, table)) return { blocked: true, reason: "schema-unsupported" };
     }
 
-    const activeSessions = queryCount(
-      database,
-      "SELECT COUNT(*) AS count FROM projection_thread_sessions WHERE status IN ('starting', 'running')",
-    );
-    const streamingMessages = queryCount(
-      database,
-      "SELECT COUNT(*) AS count FROM projection_thread_messages WHERE is_streaming != 0",
-    );
-    const activeTurns = queryCount(
-      database,
-      "SELECT COUNT(*) AS count FROM projection_turns WHERE state IN ('pending', 'running')",
-    );
-    const activeProviderRuntime = queryCount(
-      database,
-      "SELECT COUNT(*) AS count FROM provider_session_runtime WHERE status IN ('starting', 'running')",
-    );
-    const unresolvedApprovals = queryCount(
-      database,
-      "SELECT COUNT(*) AS count FROM projection_pending_approvals WHERE status = 'pending'",
-    );
-    const pendingInteractions =
-      hasColumn(database, "projection_threads", "pending_approval_count") &&
-      hasColumn(database, "projection_threads", "pending_user_input_count")
-        ? queryCount(
-            database,
-            "SELECT COUNT(*) AS count FROM projection_threads WHERE pending_approval_count > 0 OR pending_user_input_count > 0",
-          )
-        : 0;
-    if (
-      activeSessions +
-        streamingMessages +
-        activeTurns +
-        activeProviderRuntime +
-        unresolvedApprovals +
-        pendingInteractions >
-      0
-    ) {
-      return { blocked: true, reason: "source-busy" };
-    }
-
     return {
       projectCount: queryCount(
         database,

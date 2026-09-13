@@ -247,7 +247,7 @@ describe("T3DesktopMigrationCore", () => {
     });
   });
 
-  it("fails closed for a live runtime, malformed runtime state, or active work", async () => {
+  it("fails closed for a live runtime or malformed runtime state", async () => {
     const livePaths = await makeFixture();
     await writeFile(
       NodePath.join(livePaths.sourceStateDir, "server-runtime.json"),
@@ -287,22 +287,27 @@ describe("T3DesktopMigrationCore", () => {
     assert.strictEqual(malformedInspection.status, "blocked");
     assert("reason" in malformedInspection);
     assert.strictEqual(malformedInspection.reason, "recovery-required");
+  });
 
-    const busyPaths = await makeFixture();
-    const busyDatabase = new DatabaseSync(NodePath.join(busyPaths.sourceStateDir, "state.sqlite"));
-    busyDatabase.exec("INSERT INTO projection_thread_sessions VALUES ('thread-1', 'running')");
-    busyDatabase.close();
-    const busyInspection = await inspectT3DesktopMigration({
-      paths: busyPaths,
+  it("accepts interrupted projection state after T3 Code has stopped", async () => {
+    const paths = await makeFixture();
+    const database = new DatabaseSync(NodePath.join(paths.sourceStateDir, "state.sqlite"));
+    database.exec(`
+      INSERT INTO projection_thread_sessions VALUES ('thread-1', 'running');
+      INSERT INTO projection_turns VALUES (1, 'running');
+    `);
+    database.close();
+
+    const inspection = await inspectT3DesktopMigration({
+      paths,
       platform: "darwin",
       isPackaged: true,
       usesDefaultDestinationHome: true,
       processProbe: closedProcessProbe,
       migrationManifest: t3MigrationManifest,
     });
-    assert.strictEqual(busyInspection.status, "blocked");
-    assert("reason" in busyInspection);
-    assert.strictEqual(busyInspection.reason, "source-busy");
+
+    assert.strictEqual(inspection.status, "ready");
   });
 
   it("accepts older migration prefixes and rejects ledger gaps", async () => {
