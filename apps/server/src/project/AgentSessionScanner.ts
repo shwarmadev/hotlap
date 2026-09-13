@@ -933,15 +933,27 @@ export const make = Effect.gen(function* () {
     recordLimit: number,
     source: AgentSessionSource,
   ) {
-    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
+    if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) {
+      return { _tag: "Unsupported" } as const;
+    }
 
     return yield* Effect.scoped(
       fileSystem.open(filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
             if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
-              return null;
+              return { _tag: "Retry" } as const;
             }
+            const unsupportedIfStable = Effect.fn(
+              "AgentSessionScanner.readTranscript.unsupportedIfStable",
+            )(function* () {
+              return sameTranscriptIdentity(
+                expected,
+                transcriptIdentity(filePath, yield* file.stat),
+              )
+                ? ({ _tag: "Unsupported" } as const)
+                : ({ _tag: "Retry" } as const);
+            });
             const records: Array<DecodedTranscriptRecord> = [];
             let historyBytes = 0;
             let recordBytes = 0;
@@ -980,7 +992,7 @@ export const make = Effect.gen(function* () {
                 Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
               );
               if (Option.isNone(next)) {
-                return null;
+                return { _tag: "Retry" } as const;
               }
 
               bytesRead += next.value.byteLength;
@@ -996,21 +1008,26 @@ export const make = Effect.gen(function* () {
                   start = newline + 1;
                 }
                 return true;
-              });
-              if (!withinBudget) return null;
+              }).pipe(Effect.orElseSucceed(() => false));
+              if (!withinBudget) return yield* unsupportedIfStable();
             }
 
-            if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
+            if (
+              recordStarted &&
+              !(yield* Effect.try(finishRecord).pipe(Effect.orElseSucceed(() => false)))
+            ) {
+              return yield* unsupportedIfStable();
+            }
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
-              ? { records, recordCount }
-              : null;
+              ? ({ _tag: "Read", records, recordCount } as const)
+              : ({ _tag: "Retry" } as const);
           }),
         ),
       ),
     ).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
-          Effect.as(null),
+          Effect.as({ _tag: "Retry" } as const),
         ),
       ),
     );
@@ -1540,7 +1557,7 @@ export const make = Effect.gen(function* () {
             recordsRemaining,
             candidate.source,
           );
-          if (snapshot === null) {
+          if (snapshot._tag !== "Read") {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           recordsRemaining -= snapshot.recordCount;
@@ -1656,7 +1673,8 @@ export const make = Effect.gen(function* () {
           ...identity,
           parserVersion: AGENT_SESSION_PARSER_VERSION,
         };
-        if (snapshot === null) {
+        if (snapshot._tag === "Retry") continue;
+        if (snapshot._tag === "Unsupported") {
           candidates.push({ _tag: "PreserveImported", source: currentSource });
           continue;
         }

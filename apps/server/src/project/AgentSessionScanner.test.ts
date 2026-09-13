@@ -2985,6 +2985,73 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }),
     );
 
+    it.effect("retries instead of preserving a transcript that changes during reconciliation", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const claudeHomePath = yield* makeTempDir("t3code-reconcile-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-reconcile-codex-");
+        const workspace = yield* makeTempDir("t3code-reconcile-workspace-");
+        const filePath = path.join(codexHomePath, "sessions", "2026", "09", "13", "growing.jsonl");
+        const contents = [
+          encodeTranscriptRecord({
+            type: "session_meta",
+            payload: { id: "growing-reconcile-session", cwd: workspace },
+          }),
+          encodeTranscriptRecord({
+            type: "event_msg",
+            payload: { type: "user_message", message: "Original prompt" },
+          }),
+        ].join("\n");
+        yield* writeTranscript({
+          filePath,
+          contents,
+          mtimeMs: Date.parse("2026-09-13T11:00:00.000Z"),
+        });
+        const source = yield* sourceForTranscript({
+          provider: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "growing-reconcile-session",
+          filePath,
+        });
+        let grew = false;
+        const simulatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          open: (openedPath, options) =>
+            fileSystem.open(openedPath, options).pipe(
+              Effect.map((file) =>
+                openedPath === filePath
+                  ? {
+                      ...file,
+                      stat: file.stat,
+                      readAlloc: (size: FileSystem.SizeInput) =>
+                        file.readAlloc(size).pipe(
+                          Effect.tap((chunk) =>
+                            Effect.gen(function* () {
+                              if (grew || Option.isNone(chunk)) return;
+                              grew = true;
+                              yield* fileSystem.writeFileString(filePath, `${contents}\nchanged`);
+                            }),
+                          ),
+                        ),
+                    }
+                  : file,
+              ),
+            ),
+        });
+
+        expect(
+          yield* runReconcileCandidates({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+            completedSources: [source],
+          }).pipe(Effect.provideService(FileSystem.FileSystem, simulatedFileSystem)),
+        ).toEqual([]);
+        expect(grew).toBe(true);
+      }),
+    );
+
     it.effect("archives stale imports that are subagents or conclusively metadata-only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
