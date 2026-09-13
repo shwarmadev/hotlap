@@ -334,7 +334,7 @@ function validateMigrationLedger(
   const rows = database
     .prepare("SELECT migration_id AS id, name FROM effect_sql_migrations ORDER BY migration_id")
     .all() as Array<{ readonly id: number; readonly name: string }>;
-  if (rows.length === 0) return false;
+  if (rows.length === 0 || manifest.length === 0) return false;
 
   let expectedIndex = 0;
   let acceptedLegacyHotlapMigration = false;
@@ -357,8 +357,6 @@ function validateMigrationLedger(
     }
     return false;
   }
-  if (expectedIndex !== manifest.length) return false;
-
   if (hasTable(database, "hotlap_sql_migrations")) {
     const hotlapRows = database
       .prepare("SELECT migration_id AS id, name FROM hotlap_sql_migrations ORDER BY migration_id")

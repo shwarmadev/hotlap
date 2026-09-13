@@ -305,30 +305,50 @@ describe("T3DesktopMigrationCore", () => {
     assert.strictEqual(busyInspection.reason, "source-busy");
   });
 
-  it("rejects incomplete or malformed migration ledgers", async () => {
-    const incompletePaths = await makeFixture();
-    const incompleteDatabase = new DatabaseSync(
-      NodePath.join(incompletePaths.sourceStateDir, "state.sqlite"),
+  it("accepts older migration prefixes and rejects ledger gaps", async () => {
+    const olderPaths = await makeFixture();
+    const olderDatabase = new DatabaseSync(
+      NodePath.join(olderPaths.sourceStateDir, "state.sqlite"),
     );
-    const lastMigrationId = t3MigrationManifest.at(-1)?.[0];
-    assert.ok(lastMigrationId);
-    incompleteDatabase
-      .prepare("DELETE FROM effect_sql_migrations WHERE migration_id = ?")
-      .run(lastMigrationId);
-    incompleteDatabase.close();
+    const olderLastMigrationId = t3MigrationManifest.at(-3)?.[0];
+    assert.ok(olderLastMigrationId);
+    olderDatabase
+      .prepare("DELETE FROM effect_sql_migrations WHERE migration_id > ?")
+      .run(olderLastMigrationId);
+    olderDatabase.close();
 
-    const incompleteInspection = await inspectT3DesktopMigration({
-      paths: incompletePaths,
+    const olderInspection = await inspectT3DesktopMigration({
+      paths: olderPaths,
       platform: "darwin",
       isPackaged: true,
       usesDefaultDestinationHome: true,
       processProbe: closedProcessProbe,
       migrationManifest: t3MigrationManifest,
     });
-    assert.strictEqual(incompleteInspection.status, "blocked");
-    assert("reason" in incompleteInspection);
-    assert.strictEqual(incompleteInspection.reason, "schema-unsupported");
 
+    assert.strictEqual(olderInspection.status, "ready");
+
+    const gapPaths = await makeFixture();
+    const gapDatabase = new DatabaseSync(NodePath.join(gapPaths.sourceStateDir, "state.sqlite"));
+    gapDatabase
+      .prepare("DELETE FROM effect_sql_migrations WHERE migration_id = ?")
+      .run(olderLastMigrationId);
+    gapDatabase.close();
+
+    const gapInspection = await inspectT3DesktopMigration({
+      paths: gapPaths,
+      platform: "darwin",
+      isPackaged: true,
+      usesDefaultDestinationHome: true,
+      processProbe: closedProcessProbe,
+      migrationManifest: t3MigrationManifest,
+    });
+    assert.strictEqual(gapInspection.status, "blocked");
+    assert("reason" in gapInspection);
+    assert.strictEqual(gapInspection.reason, "schema-unsupported");
+  });
+
+  it("rejects malformed Hotlap migration ledgers", async () => {
     const malformedHotlapPaths = await makeFixture();
     const malformedHotlapDatabase = new DatabaseSync(
       NodePath.join(malformedHotlapPaths.sourceStateDir, "state.sqlite"),

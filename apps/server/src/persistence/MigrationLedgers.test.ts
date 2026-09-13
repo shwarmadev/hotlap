@@ -53,6 +53,34 @@ it.effect("records upstream and Hotlap migrations in separate ledgers", () =>
   ),
 );
 
+it.effect("upgrades a valid older T3 schema before applying Hotlap migrations", () =>
+  withDatabase(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 49 });
+
+      yield* runPersistenceMigrations();
+
+      const upstream = yield* sql<{ readonly migrationId: number; readonly name: string }>`
+        SELECT migration_id AS "migrationId", name
+        FROM effect_sql_migrations
+        ORDER BY migration_id
+      `;
+      const hotlap = yield* sql<{ readonly migrationId: number; readonly name: string }>`
+        SELECT migration_id AS "migrationId", name
+        FROM hotlap_sql_migrations
+        ORDER BY migration_id
+      `;
+
+      assert.deepEqual(upstream.at(-1), {
+        migrationId: 51,
+        name: "ProjectionThreadMessageContext",
+      });
+      assert.deepEqual(hotlap, [{ migrationId: 1, name: "ProjectionThreadForks" }]);
+    }),
+  ),
+);
+
 it.effect("adopts an exact legacy fork migration after verifying its columns", () =>
   withDatabase(
     Effect.gen(function* () {
