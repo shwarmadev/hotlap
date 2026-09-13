@@ -73,6 +73,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  inspectT3DesktopMigration: () =>
+    ipcRenderer.invoke(IpcChannels.INSPECT_T3_DESKTOP_MIGRATION_CHANNEL),
+  dismissT3DesktopMigration: () =>
+    ipcRenderer.invoke(IpcChannels.DISMISS_T3_DESKTOP_MIGRATION_CHANNEL),
+  startT3DesktopMigration: (input) =>
+    ipcRenderer.invoke(IpcChannels.START_T3_DESKTOP_MIGRATION_CHANNEL, input),
   requestSnapShotPermissions: (includeAccessibility) =>
     ipcRenderer.invoke(IpcChannels.REQUEST_SNAP_SHOT_PERMISSIONS_CHANNEL, includeAccessibility),
   getSnapShotState: () => ipcRenderer.invoke(IpcChannels.GET_SNAP_SHOT_STATE_CHANNEL),
