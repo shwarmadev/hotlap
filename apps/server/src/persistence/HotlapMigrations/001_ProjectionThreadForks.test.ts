@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { runMigrations } from "../Migrations.ts";
-import migrateThreadForks from "./052_ProjectionThreadForks.ts";
+import { runHotlapMigrations, runMigrations } from "../Migrations.ts";
+import migrateThreadForks from "./001_ProjectionThreadForks.ts";
 
-it.layer(NodeSqliteClient.layerMemory())("052_ProjectionThreadForks", (it) => {
+it.layer(NodeSqliteClient.layerMemory())("001_ProjectionThreadForks", (it) => {
   it.effect("adds nullable lineage without changing existing thread rows", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -22,7 +22,7 @@ it.layer(NodeSqliteClient.layerMemory())("052_ProjectionThreadForks", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 52 });
+      yield* runHotlapMigrations();
       const rows = yield* sql<{
         readonly sourceThreadId: string | null;
         readonly sourceMessageId: string | null;

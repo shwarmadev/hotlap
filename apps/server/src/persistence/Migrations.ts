@@ -10,6 +10,7 @@
 
 import * as Migrator from "effect/unstable/sql/Migrator";
 import * as Effect from "effect/Effect";
+import { t3MigrationManifest } from "@t3tools/shared/t3MigrationManifest";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -63,7 +64,7 @@ import Migration0048 from "./Migrations/048_ProjectionThreadBranchPullRequest.ts
 import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0050 from "./Migrations/050_ProjectionThreadPullRequests.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
-import Migration0052 from "./Migrations/052_ProjectionThreadForks.ts";
+import { prepareMigrationLedgers, runHotlapMigrations } from "./HotlapMigrations.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -75,62 +76,65 @@ import Migration0052 from "./Migrations/052_ProjectionThreadForks.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-const migrationEntries = [
-  [1, "OrchestrationEvents", Migration0001],
-  [2, "OrchestrationCommandReceipts", Migration0002],
-  [3, "CheckpointDiffBlobs", Migration0003],
-  [4, "ProviderSessionRuntime", Migration0004],
-  [5, "Projections", Migration0005],
-  [6, "ProjectionThreadSessionRuntimeModeColumns", Migration0006],
-  [7, "ProjectionThreadMessageAttachments", Migration0007],
-  [8, "ProjectionThreadActivitySequence", Migration0008],
-  [9, "ProviderSessionRuntimeMode", Migration0009],
-  [10, "ProjectionThreadsRuntimeMode", Migration0010],
-  [11, "OrchestrationThreadCreatedRuntimeMode", Migration0011],
-  [12, "ProjectionThreadsInteractionMode", Migration0012],
-  [13, "ProjectionThreadProposedPlans", Migration0013],
-  [14, "ProjectionThreadProposedPlanImplementation", Migration0014],
-  [15, "ProjectionTurnsSourceProposedPlan", Migration0015],
-  [16, "CanonicalizeModelSelections", Migration0016],
-  [17, "ProjectionThreadsArchivedAt", Migration0017],
-  [18, "ProjectionThreadsArchivedAtIndex", Migration0018],
-  [19, "ProjectionSnapshotLookupIndexes", Migration0019],
-  [20, "AuthAccessManagement", Migration0020],
-  [21, "AuthSessionClientMetadata", Migration0021],
-  [22, "AuthSessionLastConnectedAt", Migration0022],
-  [23, "ProjectionThreadShellSummary", Migration0023],
-  [24, "BackfillProjectionThreadShellSummary", Migration0024],
-  [25, "CleanupInvalidProjectionPendingApprovals", Migration0025],
-  [26, "CanonicalizeModelSelectionOptions", Migration0026],
-  [27, "ProviderSessionRuntimeInstanceId", Migration0027],
-  [28, "ProjectionThreadSessionInstanceId", Migration0028],
-  [29, "ProjectionThreadDetailOrderingIndexes", Migration0029],
-  [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
-  [31, "AuthAuthorizationScopes", Migration0031],
-  [32, "AuthPairingProofKeyThumbprint", Migration0032],
-  [33, "ProjectionThreadsSettled", Migration0033],
-  [34, "ProjectionThreadsSnoozed", Migration0034],
-  [35, "ProjectionThreadTitleRegeneration", Migration0035],
-  [36, "ProjectionThreadsPinned", Migration0036],
-  [37, "ProjectionTurnsKeysetIndex", Migration0037],
-  [38, "ProjectionThreadsPinOrderKey", Migration0038],
-  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
-  [40, "ProjectionProjectFaviconPath", Migration0040],
-  [41, "AuthSessionClientConnection", Migration0041],
-  [42, "ProjectionThreadLinkedPullRequest", Migration0042],
-  [43, "ProjectionThreadsUnsettledAt", Migration0043],
-  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
-  [45, "ProjectionProjectsAutoPull", Migration0045],
-  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
-  [47, "ProjectionProjectIcon", Migration0047],
-  [48, "ProjectionThreadBranchPullRequest", Migration0048],
-  [49, "ProjectionThreadsActiveOrderKey", Migration0049],
-  [50, "ProjectionThreadPullRequests", Migration0050],
-  [51, "ProjectionThreadMessageContext", Migration0051],
-  [52, "ProjectionThreadForks", Migration0052],
-] as const;
+const migrationEffects = {
+  1: Migration0001,
+  2: Migration0002,
+  3: Migration0003,
+  4: Migration0004,
+  5: Migration0005,
+  6: Migration0006,
+  7: Migration0007,
+  8: Migration0008,
+  9: Migration0009,
+  10: Migration0010,
+  11: Migration0011,
+  12: Migration0012,
+  13: Migration0013,
+  14: Migration0014,
+  15: Migration0015,
+  16: Migration0016,
+  17: Migration0017,
+  18: Migration0018,
+  19: Migration0019,
+  20: Migration0020,
+  21: Migration0021,
+  22: Migration0022,
+  23: Migration0023,
+  24: Migration0024,
+  25: Migration0025,
+  26: Migration0026,
+  27: Migration0027,
+  28: Migration0028,
+  29: Migration0029,
+  30: Migration0030,
+  31: Migration0031,
+  32: Migration0032,
+  33: Migration0033,
+  34: Migration0034,
+  35: Migration0035,
+  36: Migration0036,
+  37: Migration0037,
+  38: Migration0038,
+  39: Migration0039,
+  40: Migration0040,
+  41: Migration0041,
+  42: Migration0042,
+  43: Migration0043,
+  44: Migration0044,
+  45: Migration0045,
+  46: Migration0046,
+  47: Migration0047,
+  48: Migration0048,
+  49: Migration0049,
+  50: Migration0050,
+  51: Migration0051,
+} as const;
 
-export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
+const migrationEntries = t3MigrationManifest.map(
+  ([id, name]) => [id, name, migrationEffects[id]] as const,
+);
+
+export const migrationManifest = t3MigrationManifest;
 
 const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
@@ -170,4 +174,14 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     ? Effect.logDebug("Database schema is current")
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
   return executedMigrations;
+});
+
+export { MigrationLedgerError, runHotlapMigrations } from "./HotlapMigrations.ts";
+
+/** Validate the migration history, then update both upstream and Hotlap schemas. */
+export const runPersistenceMigrations = Effect.fn("runPersistenceMigrations")(function* () {
+  yield* prepareMigrationLedgers(migrationManifest);
+  const upstream = yield* runMigrations();
+  const hotlap = yield* runHotlapMigrations();
+  return { upstream, hotlap } as const;
 });
