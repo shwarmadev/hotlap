@@ -14,6 +14,7 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+<<<<<<< HEAD
   it("gates provider account routing under server version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.providerAccountRouting).toBeUndefined();
     expect(
@@ -54,6 +55,18 @@ describe("ExecutionEnvironmentDescriptor", () => {
     expect(current.threadForkModelSelection).toBe(true);
   });
 
+=======
+  it("requires an advertised required-worktree bootstrap capability", () => {
+    expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, requiredWorktreeBootstrap: true },
+      }).capabilities.requiredWorktreeBootstrap,
+    ).toBe(true);
+  });
+
+>>>>>>> 4749035bda13b4b6260499caedbc0d69a2f60e6f
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });
