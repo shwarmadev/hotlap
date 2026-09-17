@@ -526,6 +526,42 @@ export function resolveProviderRoutingModeAfterSelection(
     : currentMode;
 }
 
+/**
+ * Whether the server has pinned this thread to Fixed. Claude cannot move a
+ * conversation to another account once a turn exists, so the server pins Claude
+ * threads with a `latestTurn`. A blocked first send leaves messages and a session
+ * but no turn, and stays routable.
+ */
+export function isProviderRoutingPinnedToFixed(input: {
+  readonly thread:
+    | Pick<ThreadShell, "latestTurn" | "modelSelection" | "session">
+    | null
+    | undefined;
+  readonly providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>;
+}): boolean {
+  const thread = input.thread;
+  if (!thread || thread.latestTurn === null) return false;
+  const driver =
+    input.providers.find((provider) => provider.instanceId === thread.modelSelection.instanceId)
+      ?.driver ?? thread.session?.providerName;
+  return driver === "claudeAgent";
+}
+
+/**
+ * Resolves a thread's account switching mode from the composer's pending choice
+ * (`intent`) and the thread's own mode. On a thread pinned to Fixed any pending
+ * choice is stale and must not re-enable Auto.
+ */
+export function resolveThreadProviderRoutingMode(input: {
+  readonly intent: ProviderRoutingMode | null | undefined;
+  readonly threadMode: ProviderRoutingMode;
+  readonly pinnedToFixed: boolean;
+}): { readonly intent: ProviderRoutingMode | null; readonly mode: ProviderRoutingMode } {
+  if (input.pinnedToFixed) return { intent: null, mode: "fixed" };
+  const intent = input.intent ?? null;
+  return { intent, mode: intent ?? input.threadMode };
+}
+
 export function shouldClearAcknowledgedProviderRoutingIntent(input: {
   readonly acknowledged: boolean;
   readonly intendedMode: ProviderRoutingMode;

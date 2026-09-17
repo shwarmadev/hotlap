@@ -2,6 +2,7 @@ import {
   CommandId,
   EventId,
   IsoDateTime,
+  MessageId,
   NonNegativeInt,
   OrchestrationActorKind,
   OrchestrationAggregateKind,
@@ -344,6 +345,56 @@ const makeEventStore = Effect.gen(function* () {
         `,
   });
 
+  const findTurnStartRequestRow = SqlSchema.findOneOption({
+    Request: Schema.Struct({ threadId: ThreadId, messageId: MessageId }),
+    Result: OrchestrationEventPersistedRowSchema,
+    execute: ({ threadId, messageId }) => sql`
+      SELECT
+        sequence,
+        event_id AS "eventId",
+        event_type AS "type",
+        aggregate_kind AS "aggregateKind",
+        stream_id AS "aggregateId",
+        occurred_at AS "occurredAt",
+        command_id AS "commandId",
+        causation_event_id AS "causationEventId",
+        correlation_id AS "correlationId",
+        payload_json AS "payload",
+        metadata_json AS "metadata"
+      FROM orchestration_events
+      WHERE aggregate_kind = 'thread'
+        AND stream_id = ${threadId}
+        AND event_type = 'thread.turn-start-requested'
+        AND json_extract(payload_json, '$.messageId') = ${messageId}
+      ORDER BY sequence DESC
+      LIMIT 1
+    `,
+  });
+
+  const findTurnStartRequest: OrchestrationEventStoreShape["findTurnStartRequest"] = (input) =>
+    findTurnStartRequestRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "OrchestrationEventStore.findTurnStartRequest:query",
+          "OrchestrationEventStore.findTurnStartRequest:decodeRow",
+        ),
+      ),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.succeedNone,
+          onSome: (row) =>
+            decodeEvent(row).pipe(
+              Effect.mapError(
+                toPersistenceDecodeError("OrchestrationEventStore.findTurnStartRequest:rowToEvent"),
+              ),
+              Effect.map((event) =>
+                event.type === "thread.turn-start-requested" ? Option.some(event) : Option.none(),
+              ),
+            ),
+        }),
+      ),
+    );
+
   const hasEventAfter: OrchestrationEventStoreShape["hasEventAfter"] = (input) =>
     findEventAfter(input).pipe(
       Effect.map(Option.isSome),
@@ -422,6 +473,7 @@ const makeEventStore = Effect.gen(function* () {
     readAggregateRange,
     getAggregateReplayStats,
     readAll: () => readFromSequence(0, Number.MAX_SAFE_INTEGER),
+    findTurnStartRequest,
     hasEventAfter,
   } satisfies OrchestrationEventStoreShape;
 });

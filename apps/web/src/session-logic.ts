@@ -20,6 +20,7 @@ import {
   type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
+import { providerAccountRouteFailureDescription } from "@t3tools/client-runtime/provider-account-route-notifications";
 import {
   isToolLifecycleItemType,
   type AssetResource,
@@ -575,7 +576,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : activity.kind === "provider.account.route.failed"
+      ? extractRouteFailureDetail(payload)
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -1229,6 +1232,11 @@ function isCommandToolDetail(payload: Record<string, unknown> | null, heading: s
     title === "terminal" ||
     title === "ran command"
   );
+}
+
+// Route failures may carry raw causes; show only what the toast would show.
+function extractRouteFailureDetail(payload: Record<string, unknown> | null): string {
+  return providerAccountRouteFailureDescription(payload);
 }
 
 function extractToolDetail(

@@ -1144,12 +1144,19 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         thread.branch !== command.expectedBranch
           ? thread.branch
           : command.branch;
-      const providerRoutingMode =
+      const requestedRoutingMode =
         command.providerRoutingMode ??
         (command.modelSelection !== undefined &&
         command.modelSelection.instanceId !== thread.modelSelection.instanceId
           ? "fixed"
           : undefined);
+      // Claude only picks an account before its first turn, so a started thread stays fixed.
+      const providerRoutingMode =
+        requestedRoutingMode === "auto" &&
+        thread.latestTurn !== null &&
+        thread.session?.providerName === "claudeAgent"
+          ? "fixed"
+          : requestedRoutingMode;
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({

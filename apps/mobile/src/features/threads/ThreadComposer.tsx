@@ -52,7 +52,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { canEnableProviderRoutingAuto } from "../../lib/providerRouting";
+import { canEnableProviderRoutingAuto, isProviderAccountLocked } from "../../lib/providerRouting";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
@@ -376,8 +376,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     (selectedProviderStatus?.driver === "codex" ||
       selectedProviderStatus?.driver === "claudeAgent"),
   );
+  // The server pins started Claude threads to Fixed; mirror it so the switch never lies.
+  const providerAccountLocked = isProviderAccountLocked(
+    props.selectedThread,
+    props.serverConfig?.providers ?? [],
+  );
   const providerRoutingCanEnableAuto = Boolean(
     providerRoutingSupported &&
+    !providerAccountLocked &&
     selectedProviderStatus &&
     projectSettings.sources.providerRoutingPolicy === "project" &&
     canEnableProviderRoutingAuto(
@@ -638,9 +644,14 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         props.onUpdateModelSelection({ ...currentModelSelection, options }),
       runtimeMode: currentRuntimeMode,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
-      providerRoutingMode: props.selectedThread.providerRoutingMode ?? "fixed",
+      providerRoutingMode: providerAccountLocked
+        ? "fixed"
+        : (props.selectedThread.providerRoutingMode ?? "fixed"),
       providerRoutingSupported,
       providerRoutingCanEnableAuto,
+      providerRoutingAutoDisabledReason: providerAccountLocked
+        ? "Claude threads keep their account once started."
+        : null,
       providerAccountLabel: selectedProviderStatus?.displayName ?? currentModelSelection.instanceId,
       onUpdateProviderRoutingMode: props.onUpdateProviderRoutingMode,
     }),
@@ -651,6 +662,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       props.onUpdateRuntimeMode,
       props.onUpdateProviderRoutingMode,
       props.selectedThread.providerRoutingMode,
+      providerAccountLocked,
       providerOptionDescriptors,
       providerRoutingSupported,
       providerRoutingCanEnableAuto,

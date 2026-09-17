@@ -27,10 +27,7 @@ import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { ProviderRoutingSettings } from "./ProviderRoutingSettings";
-import {
-  deriveProviderRoutingOptions,
-  resolveProviderRoutingDefaultMode,
-} from "./ProviderRoutingSettings.logic";
+import { resolveTargetProviderRoutingPolicyPatch } from "./ProviderRoutingSettings.logic";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -85,13 +82,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const workspaceSource = useScopedSettingSource(["defaultThreadEnvMode"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
-  const providerRoutingOptions = deriveProviderRoutingOptions(
-    targets.map(
-      (candidate) =>
-        environments.find((entry) => entry.environmentId === candidate.environmentId)?.serverConfig
-          ?.providers ?? [],
-    ),
-  );
 
   // A checkout's t3.json wins over the environment default when the project
   // has no override of its own; show which one "inherit" resolves to.
@@ -143,20 +133,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       toastManager.add({ type: "error", title: "Default model not saved", description: reason });
       return;
     }
-    const nextSelection = resolveDefaultProviderModelSelection(providers, value);
     if (isProjectScope) {
+      // Each target keeps Auto only if its own environment still supports it
+      // with the new default account.
       updateRoutingPolicy(
-        (targetSettings) => {
-          const policy = targetSettings.providerRoutingPolicy;
-          const nextMode = resolveProviderRoutingDefaultMode(
-            policy.defaultMode,
-            providerRoutingOptions,
-            policy.instanceIdsByDriver,
-            policy.usageThresholdPercent,
-            nextSelection,
-          );
-          return nextMode === policy.defaultMode ? null : { defaultMode: nextMode };
-        },
+        (targetSettings, environmentId) =>
+          resolveTargetProviderRoutingPolicyPatch({
+            settings: { ...targetSettings, defaultModelSelection: value },
+            providers:
+              environments.find((entry) => entry.environmentId === environmentId)?.serverConfig
+                ?.providers ?? [],
+            patch: {},
+          }),
         { defaultModelSelection: value },
       );
       return;
@@ -255,7 +243,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               )
             }
           />
-          <ProviderRoutingSettings selectedModelSelection={selection} />
+          <ProviderRoutingSettings />
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

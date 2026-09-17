@@ -45,6 +45,10 @@ export type ProviderSessionDirectoryWriteError =
 
 export interface ProviderSessionDirectoryUpsertOptions {
   readonly onConflict?: "update" | "ignore";
+  /** Derive fields from the latest stored payload, after `runtimePayload` is merged in. */
+  readonly updateRuntimePayload?: (
+    runtimePayload: Record<string, unknown>,
+  ) => Record<string, unknown>;
 }
 
 export interface ProviderSessionDirectoryShape {

@@ -162,7 +162,7 @@ export function shouldAllowQueuedProviderAccountRouting(
 }
 
 export function resolveQueuedThreadMetadataUpdate(
-  message: QueuedThreadMessage,
+  message: Pick<QueuedThreadMessage, "modelSelection">,
   thread: {
     readonly modelSelection: ModelSelectionType;
     readonly providerRoutingMode?: ProviderRoutingModeType;
@@ -174,13 +174,14 @@ export function resolveQueuedThreadMetadataUpdate(
   const nextModelSelection = message.modelSelection ?? thread.modelSelection;
   const modelSelectionChanged = !modelSelectionsEqual(nextModelSelection, thread.modelSelection);
   const currentProviderRoutingMode = thread.providerRoutingMode ?? "fixed";
-  const nextProviderRoutingMode =
-    message.providerRoutingMode ??
-    routingModeAfterManualModelSelection(
-      currentProviderRoutingMode,
-      thread.modelSelection.instanceId,
-      nextModelSelection.instanceId,
-    );
+  // The queued routing mode is a snapshot, not a change request: toggles save
+  // straight to the server, which may also pin Auto threads on its own (Claude).
+  // Only a manual account change pins the thread here.
+  const nextProviderRoutingMode = routingModeAfterManualModelSelection(
+    currentProviderRoutingMode,
+    thread.modelSelection.instanceId,
+    nextModelSelection.instanceId,
+  );
   const providerRoutingModeChanged = nextProviderRoutingMode !== currentProviderRoutingMode;
 
   if (!modelSelectionChanged && !providerRoutingModeChanged) return null;

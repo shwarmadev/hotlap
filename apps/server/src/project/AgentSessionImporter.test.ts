@@ -901,7 +901,7 @@ const integrationLayer = Layer.mergeAll(
 ).pipe(
   Layer.provide(ThreadBackgroundLiveness.layer),
   Layer.provide(ThreadPlanProgress.layer),
-  Layer.provide(OrchestrationEventStoreLive),
+  Layer.provideMerge(OrchestrationEventStoreLive),
   Layer.provide(OrchestrationCommandReceiptRepositoryLive),
   Layer.provide(RepositoryIdentityResolver.layer),
   Layer.provide(SqlitePersistenceMemory),

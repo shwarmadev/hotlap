@@ -7,6 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import { isSqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import {
@@ -120,6 +121,11 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
       Option.Option<ProviderSessionRuntime>,
       ProviderSessionRuntimeRepositoryError
     >;
+
+    /** Run a read-then-write as one transaction so no other database write lands between them. */
+    readonly withWriteTransaction: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | PersistenceSqlError, R>;
 
     /** Clear only the still-matching provider turn, preserving newer admissions. */
     readonly clearActiveTurnIfMatches: (
@@ -514,6 +520,19 @@ export const make = Effect.gen(function* () {
         Effect.map(Option.isSome),
       );
 
+  const withWriteTransaction: ProviderSessionRuntimeRepository["Service"]["withWriteTransaction"] =
+    (effect) =>
+      sql.withTransaction(effect).pipe(
+        Effect.catchIf(isSqlError, (cause) =>
+          Effect.fail(
+            new PersistenceSqlError({
+              operation: "ProviderSessionRuntimeRepository.withWriteTransaction",
+              cause,
+            }),
+          ),
+        ),
+      );
+
   const clearTurnAdmissionIfMatches: ProviderSessionRuntimeRepository["Service"]["clearTurnAdmissionIfMatches"] =
     (input) =>
       clearTurnAdmissionIfMatchesRow(input).pipe(
@@ -582,6 +601,7 @@ export const make = Effect.gen(function* () {
     getByThreadId,
     clearActiveTurnIfMatches,
     clearTurnAdmissionIfMatches,
+    withWriteTransaction,
     list,
     deleteByThreadId,
   } satisfies ProviderSessionRuntimeRepository["Service"];

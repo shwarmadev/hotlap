@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  OrchestrationThreadShell,
   ProviderInstanceId,
   ProviderRoutingMode,
   ServerProvider,
@@ -60,12 +61,30 @@ export function routingModeAfterManualModelSelection(
   return currentMode === "auto" && currentInstanceId !== nextInstanceId ? "fixed" : currentMode;
 }
 
+/**
+ * Claude only picks an account before its first turn, so the server pins
+ * started Claude threads to Fixed. A first send that never became a turn
+ * leaves Auto available.
+ */
+export function isProviderAccountLocked(
+  thread: Pick<OrchestrationThreadShell, "latestTurn" | "session" | "modelSelection">,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">>,
+): boolean {
+  if (thread.latestTurn === null) return false;
+  const driver =
+    providers.find((provider) => provider.instanceId === thread.modelSelection.instanceId)
+      ?.driver ?? thread.session?.providerName;
+  return driver === "claudeAgent";
+}
+
 export function resolveProviderRoutingModeForSubmission(input: {
   readonly draftMode?: ProviderRoutingMode;
   readonly authoritativeMode: ProviderRoutingMode;
   readonly authoritativeInstanceId: ProviderInstanceId;
   readonly selectedInstanceId: ProviderInstanceId;
+  readonly accountLocked: boolean;
 }): ProviderRoutingMode {
+  if (input.accountLocked) return "fixed";
   return (
     input.draftMode ??
     routingModeAfterManualModelSelection(
@@ -76,12 +95,22 @@ export function resolveProviderRoutingModeForSubmission(input: {
   );
 }
 
-export function shouldClearAcknowledgedProviderRoutingIntent(input: {
-  readonly acknowledged: boolean;
-  readonly intendedMode: ProviderRoutingMode;
+/**
+ * Whether a thread's routing-mode draft intent should give way to the server's
+ * mode. The intent only matters while this client's save is in flight; the
+ * save's own result clears it once settled, whatever mode the server kept.
+ * `saveStatus` is "none" for a leftover intent (e.g. restored from the outbox),
+ * which clears once the server shows the same mode.
+ */
+export function shouldClearProviderRoutingIntent(input: {
+  readonly saveStatus: "none" | "pending";
+  readonly intendedMode: ProviderRoutingMode | undefined;
   readonly authoritativeMode: ProviderRoutingMode;
+  readonly accountLocked: boolean;
 }): boolean {
-  return input.acknowledged && input.intendedMode === input.authoritativeMode;
+  if (input.intendedMode === undefined) return false;
+  if (input.accountLocked) return true;
+  return input.saveStatus === "none" && input.intendedMode === input.authoritativeMode;
 }
 
 export function eligibleProjectDefaultProviderRoutingMode(

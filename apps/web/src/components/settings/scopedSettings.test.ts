@@ -21,6 +21,7 @@ import {
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
+import { resolveTargetProviderRoutingPolicyPatch } from "./ProviderRoutingSettings.logic";
 import { resolveSettingsScope } from "./settingsScope";
 
 function environment(
@@ -587,6 +588,59 @@ describe("partial object patches at project scope", () => {
           [laptopProjectId]: { defaultModelSelection: null },
         },
       },
+    ]);
+  });
+
+  it("enables Auto only on environments whose own accounts support it", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const work = ProviderInstanceId.make("codex_work");
+    const personal = ProviderInstanceId.make("codex_personal");
+    const policy = {
+      defaultMode: "fixed" as const,
+      usageThresholdPercent: 80,
+      instanceIdsByDriver: { [codex]: [work, personal] },
+    };
+    const settings = {
+      providerRoutingPolicy: policy,
+      defaultModelSelection: { instanceId: work, model: "gpt-5.5" },
+    };
+    const codexProvider = (instanceId: ProviderInstanceId, authenticated = true) => ({
+      instanceId,
+      driver: codex,
+      enabled: true,
+      installed: true,
+      status: "ready" as const,
+      auth: { status: authenticated ? ("authenticated" as const) : ("unauthenticated" as const) },
+      checkedAt: "2026-09-15T00:00:00.000Z",
+      version: "1.0.0",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    });
+    // Only the server has two usable accounts; the laptop's second account is signed out.
+    const providersByEnvironment = new Map([
+      [server.environmentId, [codexProvider(work), codexProvider(personal)]],
+      [laptop.environmentId, [codexProvider(work), codexProvider(personal, false)]],
+    ]);
+
+    const plan = planScopedProviderRoutingPolicyPatch(
+      project,
+      [environment("Server", { settings }), environment("Laptop", { settings })],
+      (targetSettings, environmentId) =>
+        resolveTargetProviderRoutingPolicyPatch({
+          settings: targetSettings,
+          providers: providersByEnvironment.get(environmentId) ?? [],
+          patch: { defaultMode: "auto" },
+        }),
+    );
+
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      {
+        projectSettingsOverrides: {
+          [projectId]: { providerRoutingPolicy: { ...policy, defaultMode: "auto" } },
+        },
+      },
+      { projectSettingsOverrides: { [laptopProjectId]: { providerRoutingPolicy: policy } } },
     ]);
   });
 

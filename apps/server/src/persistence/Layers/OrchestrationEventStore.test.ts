@@ -11,6 +11,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -272,6 +273,58 @@ layer("OrchestrationEventStore", (it) => {
           hasCreateEvent: false,
         },
       );
+    }),
+  );
+
+  it.effect("finds the latest turn start request newest-first without replaying history", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("turn-start-lookup-thread");
+      const turnStartRequested = (id: string, messageId: string) =>
+        store.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make(id),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: "2026-01-01T00:00:00.000Z",
+          commandId: null,
+          causationEventId: null,
+          correlationId: null,
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make(messageId),
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          },
+        });
+      // Older unreadable history must never be decoded by the lookup.
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          actor_kind, payload_json, metadata_json
+        ) VALUES (
+          'turn-start-lookup-unreadable', 'thread', ${threadId}, 0, 'thread.message-sent',
+          '2026-01-01T00:00:00.000Z', 'server', '{', '{'
+        )
+      `;
+      yield* turnStartRequested("turn-start-lookup-first", "message-target");
+      const latest = yield* turnStartRequested("turn-start-lookup-retry", "message-target");
+      yield* turnStartRequested("turn-start-lookup-other", "message-other");
+      yield* store.append(messageEvent(threadId, "turn-start-lookup-later"));
+
+      const found = yield* store.findTurnStartRequest({
+        threadId,
+        messageId: MessageId.make("message-target"),
+      });
+      assert.equal(Option.getOrThrow(found).sequence, latest.sequence);
+      const missing = yield* store.findTurnStartRequest({
+        threadId,
+        messageId: MessageId.make("message-missing"),
+      });
+      assert.isTrue(Option.isNone(missing));
     }),
   );
 

@@ -669,6 +669,41 @@ describe("buildThreadFeed", () => {
     expect(row?.canExpand).toBe(input.canExpand);
   });
 
+  it.each([
+    {
+      name: "a raw cause",
+      detail:
+        "Error: spawn failed\n    at startSession (/Users/me/t3/apps/server/src/provider.ts:12:3)",
+      shown: "The account switch could not be completed.",
+    },
+    {
+      name: "a short user message",
+      detail: "No eligible provider account is available. The message was not sent.",
+      shown: "No eligible provider account is available. The message was not sent.",
+    },
+  ])("shows a sanitized account switch failure for $name", (input) => {
+    const thread = makeThread({
+      id: ThreadId.make("route-failed"),
+      projectId: ProjectId.make("project-1"),
+      title: "Route failed",
+      activities: [
+        makeActivity({
+          id: EventId.make("route-failed"),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          kind: "provider.account.route.failed",
+          tone: "error",
+          summary: "Provider account switch failed",
+          payload: { detail: input.detail },
+        }),
+      ],
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const row = group.activities[0]!;
+    expect(row.getCopyText()).toBe(`Provider account switch failed\n${input.shown}`);
+  });
+
   it.each(["runtime.error", "runtime.warning"] as const)(
     "shows and copies the message of %s without a duplicate expanded body",
     (kind) => {

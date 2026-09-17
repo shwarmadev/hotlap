@@ -40,6 +40,7 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -80,6 +81,7 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
+import { readPersistedTurnAdmission, withDispatchingMessage } from "./ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
@@ -1264,29 +1266,30 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const getPersistedTurnAdmission: NonNullable<
     ProviderService.ProviderServiceShape["getPersistedTurnAdmission"]
+  > = ({ threadId, messageId }) =>
+    directory
+      .getBinding(threadId)
+      .pipe(
+        Effect.map((binding) =>
+          Option.isSome(binding)
+            ? readPersistedTurnAdmission(binding.value.runtimePayload, messageId)
+            : null,
+        ),
+      );
+
+  const hasPersistedResumeCursor: NonNullable<
+    ProviderService.ProviderServiceShape["hasPersistedResumeCursor"]
   > = (threadId) =>
-    directory.getBinding(threadId).pipe(
-      Effect.map(
-        Option.match({
-          onNone: () => null,
-          onSome: (binding) => {
-            const payload = binding.runtimePayload;
-            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
-              return null;
-            }
-            const messageId =
-              "lastAdmittedMessageId" in payload ? payload.lastAdmittedMessageId : null;
-            const turnId = "lastAdmittedTurnId" in payload ? payload.lastAdmittedTurnId : null;
-            if (typeof messageId !== "string" || typeof turnId !== "string") return null;
-            return {
-              messageId: MessageId.make(messageId),
-              turnId: TurnId.make(turnId),
-              active: "activeTurnId" in payload && payload.activeTurnId === turnId,
-            };
-          },
-        }),
-      ),
-    );
+    directory
+      .getBinding(threadId)
+      .pipe(
+        Effect.map(
+          (binding) =>
+            Option.isSome(binding) &&
+            binding.value.resumeCursor !== undefined &&
+            binding.value.resumeCursor !== null,
+        ),
+      );
 
   // `subscribedAdapters` is our source-of-truth for "which instance adapters
   // are currently wired into the runtime event bus". It both tracks the set
@@ -1878,6 +1881,23 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       yield* McpSessionRegistry.touchActiveMcpThread(input.threadId);
       const analyticsModelSelection =
         input.modelSelection?.instanceId === routed.instanceId ? input.modelSelection : undefined;
+      const requestId = input.requestId;
+      const markDispatching = (dispatching: boolean) =>
+        requestId === undefined
+          ? Effect.void
+          : directory.upsert(
+              {
+                threadId: input.threadId,
+                provider: routed.adapter.provider,
+                providerInstanceId: routed.instanceId,
+              },
+              {
+                updateRuntimePayload: (payload) =>
+                  withDispatchingMessage(payload, requestId, dispatching),
+              },
+            );
+      // Durable before dispatch, so recovery after a restart mid-send never replays the message.
+      yield* markDispatching(true);
       const turn = yield* Effect.acquireUseRelease(
         beginTurnAnalytics({
           providerInstanceId: routed.instanceId,
@@ -1904,29 +1924,39 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
             threadId: input.threadId,
             requestId: turnMetadata.requestId,
           }),
+      ).pipe(
+        // The caller reports this failure now. Shutdown interrupts keep the marker.
+        Effect.onError((cause) =>
+          Cause.hasInterruptsOnly(cause) ? Effect.void : markDispatching(false).pipe(Effect.ignore),
+        ),
       );
-      yield* directory.upsert({
-        threadId: input.threadId,
-        provider: routed.adapter.provider,
-        providerInstanceId: routed.instanceId,
-        status: "running",
-        ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
-        runtimePayload: {
-          ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
-          activeTurnId: turn.turnId,
-          ...(input.requestId !== undefined
-            ? {
-                lastAdmittedMessageId: input.requestId,
-                lastAdmittedTurnId: turn.turnId,
-              }
-            : {}),
-          // Admission and marker consumption must survive the same restart.
-          continueAfterServerUpdate: null,
-          continueAfterServerUpdatePrepared: null,
-          lastRuntimeEvent: "provider.sendTurn",
-          lastRuntimeEventAt: yield* nowIso,
+      yield* directory.upsert(
+        {
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          providerInstanceId: routed.instanceId,
+          status: "running",
+          ...(turn.resumeCursor !== undefined ? { resumeCursor: turn.resumeCursor } : {}),
+          runtimePayload: {
+            ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+            activeTurnId: turn.turnId,
+            ...(requestId !== undefined
+              ? { lastAdmittedMessageId: requestId, lastAdmittedTurnId: turn.turnId }
+              : {}),
+            // Admission and marker consumption must survive the same restart.
+            continueAfterServerUpdate: null,
+            continueAfterServerUpdatePrepared: null,
+            lastRuntimeEvent: "provider.sendTurn",
+            lastRuntimeEventAt: yield* nowIso,
+          },
         },
-      });
+        requestId === undefined
+          ? undefined
+          : {
+              // The admission replaces only this send's marker, in the same write.
+              updateRuntimePayload: (payload) => withDispatchingMessage(payload, requestId, false),
+            },
+      );
       yield* analytics.record("provider.turn.sent", {
         provider: routed.adapter.provider,
         model: input.modelSelection?.model,
@@ -2443,6 +2473,24 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const clearSettledDispatchMarker: NonNullable<
+    ProviderService.ProviderServiceShape["clearSettledDispatchMarker"]
+  > = Effect.fn("clearSettledDispatchMarker")(function* (input) {
+    const binding = yield* directory.getBinding(input.threadId);
+    if (Option.isNone(binding) || binding.value.providerInstanceId === undefined) return;
+    yield* directory.upsert(
+      {
+        threadId: input.threadId,
+        provider: binding.value.provider,
+        providerInstanceId: binding.value.providerInstanceId,
+      },
+      {
+        // Removes only this send's entry, so an overlapping send keeps its marker.
+        updateRuntimePayload: (payload) => withDispatchingMessage(payload, input.messageId, false),
+      },
+    );
+  });
+
   const clearOrphanedTurnAdmissionIfMatches: NonNullable<
     ProviderService.ProviderServiceShape["clearOrphanedTurnAdmissionIfMatches"]
   > = Effect.fn("clearOrphanedTurnAdmissionIfMatches")(function* (input) {
@@ -2711,6 +2759,8 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     clearActiveTurnIfMatches,
     reconcilePersistedActiveTurn,
     getPersistedTurnAdmission,
+    hasPersistedResumeCursor,
+    clearSettledDispatchMarker,
     clearOrphanedTurnAdmissionIfMatches,
     getCapabilities,
     getInstanceInfo,

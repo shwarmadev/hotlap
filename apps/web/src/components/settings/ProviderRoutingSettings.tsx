@@ -1,7 +1,7 @@
 import {
   ProviderDriverKind,
+  type EnvironmentId,
   type ProviderInstanceId,
-  type ModelSelection,
   type ProviderRoutingMode,
 } from "@t3tools/contracts";
 import { useMemo } from "react";
@@ -18,13 +18,15 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow } from "./settingsLayout";
 import {
-  canEnableProviderRoutingAutoForEveryPolicy,
+  canEnableProviderRoutingAutoOnEveryTarget,
   deriveProviderRoutingOptions,
   mergeProviderRoutingOptions,
-  providerRoutingPoolPatch,
+  providerRoutingThresholdPatch,
+  resolveTargetProviderRoutingPolicyPatch,
   supportsProviderAccountRouting,
   toggleProviderRoutingInstance,
 } from "./ProviderRoutingSettings.logic";
+import type { ProviderRoutingPolicyPatch } from "./scopedSettings";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -40,9 +42,7 @@ const ROUTABLE_DRIVERS = [
   ProviderDriverKind.make("claudeAgent"),
 ] as const;
 
-export function ProviderRoutingSettings(props: {
-  readonly selectedModelSelection: ModelSelection | null;
-}) {
+export function ProviderRoutingSettings() {
   const { scope, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const updatePolicy = useUpdateScopedProviderRoutingPolicy();
@@ -86,39 +86,35 @@ export function ProviderRoutingSettings(props: {
       groupedOptions.set(driver, []);
     }
   }
-  const canEnableAuto = canEnableProviderRoutingAutoForEveryPolicy(
-    options,
-    targets.map((target) => target.settings.providerRoutingPolicy),
-    props.selectedModelSelection,
+  // Each target is validated against its own environment's accounts and default account.
+  const providersFor = (environmentId: EnvironmentId) =>
+    targetEnvironments.find((environment) => environment?.environmentId === environmentId)
+      ?.serverConfig?.providers ?? [];
+  const canEnableAuto = canEnableProviderRoutingAutoOnEveryTarget(
+    targets.map((target) => ({
+      settings: target.settings,
+      providers: providersFor(target.environmentId),
+    })),
   );
+  const updateTargetPolicies = (patch: ProviderRoutingPolicyPatch) =>
+    updatePolicy((targetSettings, environmentId) =>
+      resolveTargetProviderRoutingPolicyPatch({
+        settings: targetSettings,
+        providers: providersFor(environmentId),
+        patch,
+      }),
+    );
 
-  const setMode = (defaultMode: ProviderRoutingMode) => updatePolicy({ defaultMode });
+  const setMode = (defaultMode: ProviderRoutingMode) => updateTargetPolicies({ defaultMode });
   const setThreshold = (usageThresholdPercent: number | null) => {
-    const validThreshold =
-      usageThresholdPercent !== null &&
-      Number.isInteger(usageThresholdPercent) &&
-      usageThresholdPercent >= 1 &&
-      usageThresholdPercent <= 100
-        ? usageThresholdPercent
-        : null;
-    updatePolicy({
-      ...(validThreshold === null ? { defaultMode: "fixed" as const } : {}),
-      usageThresholdPercent: validThreshold,
-    });
+    const patch = providerRoutingThresholdPatch(usageThresholdPercent);
+    if (patch !== null) updatePolicy(patch);
   };
   const setDriverInstances = (
     driver: ProviderDriverKind,
     instanceIds: ReadonlyArray<ProviderInstanceId>,
   ) => {
-    updatePolicy((targetSettings) =>
-      providerRoutingPoolPatch(
-        targetSettings.providerRoutingPolicy,
-        driver,
-        instanceIds,
-        options,
-        props.selectedModelSelection,
-      ),
-    );
+    updateTargetPolicies({ instanceIdsByDriver: { [driver]: instanceIds } });
   };
 
   return (

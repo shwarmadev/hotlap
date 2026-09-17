@@ -9,7 +9,8 @@ export function ProviderRoutingModeControl(props: {
   readonly accountLabel: string;
   readonly size: ComposerControlSize;
   readonly disabled?: boolean;
-  readonly autoEnabled: boolean;
+  /** Why Auto cannot be chosen, or null when it can. */
+  readonly autoDisabledReason: string | null;
   readonly onChange: (mode: ProviderRoutingMode) => void;
 }) {
   return (
@@ -32,13 +33,15 @@ export function ProviderRoutingModeControl(props: {
         </SelectValue>
       </ComposerSelectControl>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
-        <SelectItem value="auto" className="min-w-60 py-2" disabled={!props.autoEnabled}>
+        <SelectItem
+          value="auto"
+          className="min-w-60 py-2"
+          disabled={props.autoDisabledReason !== null}
+        >
           <div className="grid gap-0.5">
             <span className="font-medium">Auto</span>
             <span className="text-xs text-muted-foreground">
-              {props.autoEnabled
-                ? "Use the next available project account when needed."
-                : "Add at least two project accounts for this provider."}
+              {props.autoDisabledReason ?? "Use the next available project account when needed."}
             </span>
           </div>
         </SelectItem>

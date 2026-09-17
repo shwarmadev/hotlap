@@ -1,7 +1,14 @@
-import { EventId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  EventId,
+  type OrchestrationThreadActivity,
+  PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createProviderAccountRouteNotificationTracker } from "./providerAccountRouteNotifications.js";
+import {
+  createProviderAccountRouteNotificationTracker,
+  providerAccountRouteFailureDescription,
+} from "./providerAccountRouteNotifications.js";
 
 function activity(
   id: string,
@@ -103,7 +110,7 @@ describe("provider account route notifications", () => {
           activity(
             "failed",
             "provider.account.route.failed",
-            { detail: "Work account could not authenticate." },
+            { detail: PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS.targetStartFailed },
             "Provider account switch failed",
           ),
         ],
@@ -114,9 +121,57 @@ describe("provider account route notifications", () => {
         activityId: "failed",
         kind: "error",
         title: "Provider account switch failed",
-        description: "Work account could not authenticate.",
+        description: PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS.targetStartFailed,
       },
     ]);
+  });
+
+  it("replaces internal failure details with a generic description", () => {
+    const tracker = createProviderAccountRouteNotificationTracker();
+    tracker.observe("env:thread", [], true);
+    const unsafeDetails = [
+      "Error: spawn failed\n    at ensureSession (/Users/dev/t3/apps/server/src/provider.ts:12:3)",
+      "C:/Users/dev/AppData/claude.json could not be read",
+      "ENOENT:/Users/dev/.t3/userdata/secrets/claude.json",
+      "Missing ~/.t3/userdata/secrets/claude.json",
+      "Invalid API key sk-ant-api03-AbCdEf123_xyz-QQ",
+      "ANTHROPIC_API_KEY=sk-ant-abc123 rejected",
+      '{"error":{"type":"auth"},"token":"ghp_abcdef"}',
+      "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc",
+      "Account alice@example.com is not signed in",
+      "TypeError: Cannot read properties of undefined (reading x)",
+      "SqlError: SQLITE_BUSY database is locked",
+      "Work account could not authenticate.",
+    ];
+
+    const notifications = tracker.observe(
+      "env:thread",
+      unsafeDetails.map((detail, index) =>
+        activity(
+          `failed-${index}`,
+          "provider.account.route.failed",
+          { detail },
+          "Provider account switch failed",
+        ),
+      ),
+      true,
+    );
+
+    expect(notifications.map((notification) => notification.description)).toEqual(
+      unsafeDetails.map(() => "The account switch could not be completed."),
+    );
+  });
+
+  it("shows only the details a current server writes", () => {
+    for (const detail of Object.values(PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS)) {
+      expect(providerAccountRouteFailureDescription({ detail })).toBe(detail);
+    }
+    expect(providerAccountRouteFailureDescription({ detail: "   " })).toBe(
+      "The account switch could not be completed.",
+    );
+    expect(providerAccountRouteFailureDescription(null)).toBe(
+      "The account switch could not be completed.",
+    );
   });
 
   it("baselines each active thread independently and survives reconnect snapshots", () => {

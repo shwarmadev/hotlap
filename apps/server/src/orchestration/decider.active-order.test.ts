@@ -4,6 +4,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
   type OrchestrationThread,
@@ -92,6 +93,57 @@ it.layer(NodeServices.layer)("active thread ordering", (it) => {
       ]);
       const projected = yield* projectEvent(readModel, { ...events[0]!, sequence: 1 });
       expect(projected.threads[0]?.providerRoutingMode).toBe("auto");
+    }),
+  );
+
+  it.effect("keeps a started Claude thread fixed when a client asks for automatic routing", () =>
+    Effect.gen(function* () {
+      const claudeThread = {
+        modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-5" },
+        session: {
+          threadId: THREAD_ID,
+          status: "ready" as const,
+          providerName: "claudeAgent",
+          providerInstanceId: ProviderInstanceId.make("claude"),
+          runtimeMode: "full-access" as const,
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
+      };
+      const command = {
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-claude-routing-auto"),
+        threadId: THREAD_ID,
+        providerRoutingMode: "auto",
+      } as const;
+
+      const started = yield* decideOrchestrationCommand({
+        command,
+        readModel: makeReadModel({
+          ...claudeThread,
+          latestTurn: {
+            turnId: TurnId.make("turn-1"),
+            state: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+        }),
+      });
+      expect(Array.isArray(started) ? started : [started]).toMatchObject([
+        { type: "thread.meta-updated", payload: { providerRoutingMode: "fixed" } },
+      ]);
+
+      // Before its first turn, a Claude thread can still pick an account automatically.
+      const unstarted = yield* decideOrchestrationCommand({
+        command,
+        readModel: makeReadModel(claudeThread),
+      });
+      expect(Array.isArray(unstarted) ? unstarted : [unstarted]).toMatchObject([
+        { type: "thread.meta-updated", payload: { providerRoutingMode: "auto" } },
+      ]);
     }),
   );
 

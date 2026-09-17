@@ -1,19 +1,26 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  TurnId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   canEnableProviderRoutingAuto,
   eligibleProjectDefaultProviderRoutingMode,
+  isProviderAccountLocked,
   providerAccountRoutingConsentForSubmission,
   reconcileDraftModelSelectionAfterAutomaticRoute,
   resolveProviderRoutingModeForSubmission,
   resolveNewTaskProviderRoutingMode,
   routingModeAfterManualModelSelection,
-  shouldClearAcknowledgedProviderRoutingIntent,
+  shouldClearProviderRoutingIntent,
 } from "./providerRouting";
 
 const codexOne = ProviderInstanceId.make("codex-one");
 const codexTwo = ProviderInstanceId.make("codex-two");
+const claudeOne = ProviderInstanceId.make("claude-one");
 
 function provider(instanceId: string, overrides: Partial<ServerProvider> = {}): ServerProvider {
   return {
@@ -54,6 +61,7 @@ describe("resolveProviderRoutingModeForSubmission", () => {
         authoritativeMode: "auto",
         authoritativeInstanceId: codexOne,
         selectedInstanceId: codexTwo,
+        accountLocked: false,
       }),
     ).toBe("fixed");
   });
@@ -65,6 +73,7 @@ describe("resolveProviderRoutingModeForSubmission", () => {
         authoritativeMode: "fixed",
         authoritativeInstanceId: codexOne,
         selectedInstanceId: codexOne,
+        accountLocked: false,
       }),
     ).toBe("auto");
   });
@@ -75,35 +84,115 @@ describe("resolveProviderRoutingModeForSubmission", () => {
         authoritativeMode: "auto",
         authoritativeInstanceId: codexOne,
         selectedInstanceId: codexTwo,
+        accountLocked: false,
+      }),
+    ).toBe("fixed");
+  });
+
+  it("sends a started Claude thread as Fixed despite a stale Auto intent or projection", () => {
+    expect(
+      resolveProviderRoutingModeForSubmission({
+        draftMode: "auto",
+        authoritativeMode: "auto",
+        authoritativeInstanceId: claudeOne,
+        selectedInstanceId: claudeOne,
+        accountLocked: true,
       }),
     ).toBe("fixed");
   });
 });
 
-describe("shouldClearAcknowledgedProviderRoutingIntent", () => {
-  it("clears the latest saved Fixed intent when Auto was coalesced before projection", () => {
+describe("isProviderAccountLocked", () => {
+  const providers = [
+    provider("claude-one", { driver: ProviderDriverKind.make("claudeAgent") }),
+    provider("codex-one"),
+  ];
+  const turn = {
+    turnId: TurnId.make("turn-1"),
+    state: "completed",
+    requestedAt: "2026-09-15T00:00:00.000Z",
+    startedAt: "2026-09-15T00:00:01.000Z",
+    completedAt: "2026-09-15T00:00:02.000Z",
+    assistantMessageId: null,
+  } as const;
+
+  it("locks a Claude thread once it has a turn", () => {
     expect(
-      shouldClearAcknowledgedProviderRoutingIntent({
-        acknowledged: true,
+      isProviderAccountLocked(
+        { latestTurn: turn, session: null, modelSelection: { instanceId: claudeOne, model: "m" } },
+        providers,
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps Auto available for a Claude thread whose first send never became a turn", () => {
+    expect(
+      isProviderAccountLocked(
+        { latestTurn: null, session: null, modelSelection: { instanceId: claudeOne, model: "m" } },
+        providers,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not lock started threads on providers that can switch accounts", () => {
+    expect(
+      isProviderAccountLocked(
+        { latestTurn: turn, session: null, modelSelection: { instanceId: codexOne, model: "m" } },
+        providers,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("shouldClearProviderRoutingIntent", () => {
+  it("keeps an intent while its save is in flight", () => {
+    expect(
+      shouldClearProviderRoutingIntent({
+        saveStatus: "pending",
+        intendedMode: "auto",
+        authoritativeMode: "fixed",
+        accountLocked: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("clears a leftover intent once the server shows the same mode", () => {
+    expect(
+      shouldClearProviderRoutingIntent({
+        saveStatus: "none",
         intendedMode: "fixed",
         authoritativeMode: "fixed",
+        accountLocked: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldClearProviderRoutingIntent({
+        saveStatus: "none",
+        intendedMode: "auto",
+        authoritativeMode: "fixed",
+        accountLocked: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("drops any Auto intent on a started Claude thread, even mid-save", () => {
+    expect(
+      shouldClearProviderRoutingIntent({
+        saveStatus: "pending",
+        intendedMode: "auto",
+        authoritativeMode: "fixed",
+        accountLocked: true,
       }),
     ).toBe(true);
   });
 
-  it("keeps an intent until its save is acknowledged and projected", () => {
+  it("has nothing to clear without an intent", () => {
     expect(
-      shouldClearAcknowledgedProviderRoutingIntent({
-        acknowledged: false,
-        intendedMode: "fixed",
+      shouldClearProviderRoutingIntent({
+        saveStatus: "none",
+        intendedMode: undefined,
         authoritativeMode: "fixed",
-      }),
-    ).toBe(false);
-    expect(
-      shouldClearAcknowledgedProviderRoutingIntent({
-        acknowledged: true,
-        intendedMode: "fixed",
-        authoritativeMode: "auto",
+        accountLocked: true,
       }),
     ).toBe(false);
   });

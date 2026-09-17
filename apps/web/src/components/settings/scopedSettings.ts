@@ -30,7 +30,7 @@ export type ProviderRoutingPolicyPatch = Partial<
 
 export type ProviderRoutingPolicyPatchResolver =
   | ProviderRoutingPolicyPatch
-  | ((settings: ServerSettings) => ProviderRoutingPolicyPatch | null);
+  | ((settings: ServerSettings, environmentId: EnvironmentId) => ProviderRoutingPolicyPatch | null);
 
 interface ScopedSettingsEnvironment {
   readonly environmentId: EnvironmentId;
@@ -169,6 +169,7 @@ function projectOverrideWrites(
     current: ProjectSettingsOverrides,
     settings: ServerSettings,
     projectId: ProjectId,
+    environmentId: EnvironmentId,
   ) => ProjectSettingsOverrides | null,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
@@ -183,7 +184,12 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
+    const entry = update(
+      settings.projectSettingsOverrides[member.id] ?? {},
+      settings,
+      member.id,
+      member.environmentId,
+    );
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -230,7 +236,10 @@ function planScopedSettingsServerPatch(
   environments: readonly ScopedSettingsEnvironment[],
   clientPatch: ClientSettingsPatch,
   serverKeys: readonly string[],
-  resolveServerPatch: (settings: ServerSettings) => ServerSettingsPatch,
+  resolveServerPatch: (
+    settings: ServerSettings,
+    environmentId: EnvironmentId,
+  ) => ServerSettingsPatch,
   inputKeyCount: number,
 ) {
   const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
@@ -244,20 +253,24 @@ function planScopedSettingsServerPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
-              // Object-valued keys arrive as partial patches (the writing style
-              // rows send one field); an override entry stores the whole value,
-              // so complete the patch from the target's effective value.
-              const effective = resolveProjectSettings(settings, projectId).settings;
-              const serverPatch = resolveServerPatch(effective);
-              const next: Record<string, unknown> = { ...current };
-              for (const [key, value] of Object.entries(serverPatch)) {
-                const base = effective[key as keyof ServerSettings];
-                next[key] =
-                  isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
-              }
-              return next as ProjectSettingsOverrides;
-            })
+          : projectOverrideWrites(
+              scope,
+              environments,
+              (current, settings, projectId, environmentId) => {
+                // Object-valued keys arrive as partial patches (the writing style
+                // rows send one field); an override entry stores the whole value,
+                // so complete the patch from the target's effective value.
+                const effective = resolveProjectSettings(settings, projectId).settings;
+                const serverPatch = resolveServerPatch(effective, environmentId);
+                const next: Record<string, unknown> = { ...current };
+                for (const [key, value] of Object.entries(serverPatch)) {
+                  const base = effective[key as keyof ServerSettings];
+                  next[key] =
+                    isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
+                }
+                return next as ProjectSettingsOverrides;
+              },
+            )
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.flatMap((environment) =>
               environment.serverConfig
@@ -265,7 +278,10 @@ function planScopedSettingsServerPatch(
                     {
                       environmentId: environment.environmentId,
                       label: environment.label,
-                      patch: resolveServerPatch(environment.serverConfig.settings),
+                      patch: resolveServerPatch(
+                        environment.serverConfig.settings,
+                        environment.environmentId,
+                      ),
                     },
                   ]
                 : [],
@@ -306,9 +322,10 @@ export function planScopedProviderRoutingPolicyPatch(
     environments,
     clientPatch,
     serverKeys,
-    (settings) => {
+    (settings, environmentId) => {
       const targetPolicyPatch =
-        staticPolicyPatch ?? (typeof policyPatch === "function" ? policyPatch(settings) : null);
+        staticPolicyPatch ??
+        (typeof policyPatch === "function" ? policyPatch(settings, environmentId) : null);
       if (targetPolicyPatch === null) return serverPatch;
       return {
         ...serverPatch,

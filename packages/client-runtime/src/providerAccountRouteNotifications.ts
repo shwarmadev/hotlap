@@ -1,4 +1,7 @@
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import {
+  type OrchestrationThreadActivity,
+  PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS,
+} from "@t3tools/contracts";
 
 export interface ProviderAccountRouteNotification {
   readonly activityId: string;
@@ -31,15 +34,32 @@ function stringValue(payload: Readonly<Record<string, unknown>>, keys: ReadonlyA
   return null;
 }
 
+const GENERIC_ROUTE_FAILURE_DESCRIPTION = "The account switch could not be completed.";
+const ALLOWED_ROUTE_FAILURE_DETAILS = new Set<string>(
+  Object.values(PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS),
+);
+
+/**
+ * Route failure details are user-facing, so only the fixed set a current server
+ * writes is shown. Anything else (raw causes from older servers, provider error
+ * text persisted in old activities) becomes a generic description. Used by every
+ * surface that renders `provider.account.route.failed`.
+ */
+export function providerAccountRouteFailureDescription(payload: unknown): string {
+  const detail = stringValue(record(payload), ["detail", "error", "message"]);
+  return detail !== null && ALLOWED_ROUTE_FAILURE_DETAILS.has(detail)
+    ? detail
+    : GENERIC_ROUTE_FAILURE_DESCRIPTION;
+}
+
 function present(activity: OrchestrationThreadActivity): ProviderAccountRouteNotification | null {
   const payload = record(activity.payload);
   if (activity.kind === "provider.account.route.failed") {
-    const detail = stringValue(payload, ["detail", "error", "message"]);
     return {
       activityId: activity.id,
       kind: "error",
       title: activity.summary,
-      ...(detail === null ? {} : { description: detail }),
+      description: providerAccountRouteFailureDescription(payload),
     };
   }
 

@@ -13,7 +13,9 @@ import {
   type AgentSessionImportSource,
 } from "@t3tools/contracts";
 import { assert, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -144,6 +146,82 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
           activeTurnId: "turn-1",
         });
       }
+    }),
+  );
+
+  it.effect("does not write a stale payload over a concurrent runtime update", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const repository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-stale-payload-race");
+      const binding = {
+        threadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      };
+      yield* directory.upsert({ ...binding, runtimePayload: { dispatchingMessageIds: ["m-1"] } });
+
+      // The first read of this directory parks after loading the row.
+      const staleReadTaken = yield* Deferred.make<void>();
+      const releaseStaleWrite = yield* Deferred.make<void>();
+      let parkNextRead = true;
+      const parkingDirectory = yield* ProviderSessionDirectory.pipe(
+        Effect.provide(
+          Layer.fresh(ProviderSessionDirectoryLive).pipe(
+            Layer.provide(
+              Layer.succeed(
+                ProviderSessionRuntime.ProviderSessionRuntimeRepository,
+                ProviderSessionRuntime.ProviderSessionRuntimeRepository.of({
+                  ...repository,
+                  getByThreadId: (input) =>
+                    repository.getByThreadId(input).pipe(
+                      Effect.tap(() => {
+                        if (!parkNextRead) return Effect.void;
+                        parkNextRead = false;
+                        return Deferred.succeed(staleReadTaken, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseStaleWrite)),
+                        );
+                      }),
+                    ),
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const resumeWrite = yield* parkingDirectory
+        .upsert({ ...binding, resumeCursor: { cursor: "after-turn" } })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(staleReadTaken);
+      const admissionWrite = yield* directory
+        .upsert({
+          ...binding,
+          runtimePayload: {
+            dispatchingMessageIds: [],
+            lastAdmittedMessageId: "m-1",
+            lastAdmittedTurnId: "turn-1",
+          },
+        })
+        .pipe(Effect.forkChild);
+      // Let the newer write finish first if nothing holds it back. The assertions
+      // below must hold under any interleaving, so the bounded yields only give
+      // an unserialized upsert the chance to fail.
+      yield* Effect.raceFirst(
+        Fiber.await(admissionWrite),
+        Effect.yieldNow.pipe(Effect.repeat({ times: 100 })),
+      );
+      yield* Deferred.succeed(releaseStaleWrite, undefined);
+      yield* Fiber.join(resumeWrite);
+      yield* Fiber.join(admissionWrite);
+
+      const runtime = Option.getOrThrow(yield* repository.getByThreadId({ threadId }));
+      assert.deepEqual(runtime.resumeCursor, { cursor: "after-turn" });
+      assert.deepEqual(runtime.runtimePayload, {
+        dispatchingMessageIds: [],
+        lastAdmittedMessageId: "m-1",
+        lastAdmittedTurnId: "turn-1",
+      });
     }),
   );
 

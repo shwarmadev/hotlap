@@ -1,5 +1,6 @@
 import * as Option from "effect/Option";
 import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
+import { providerAccountRouteFailureDescription } from "@t3tools/client-runtime/provider-account-route-notifications";
 import * as Schema from "effect/Schema";
 import {
   requestKindFromRequestType,
@@ -534,6 +535,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   const output = commandOutput ? stripTrailingExitCode(commandOutput).output : null;
   if (!taskDetailAsLabel && output) {
     entry.detail = output;
+  } else if (activity.kind === "provider.account.route.failed") {
+    // Route failures can carry raw server causes; show only user-safe copy.
+    entry.detail = providerAccountRouteFailureDescription(payload);
   } else if (!taskDetailAsLabel && typeof payload?.detail === "string") {
     const detail = stripTrailingExitCode(payload.detail).output;
     const data = asRecord(payload.data);

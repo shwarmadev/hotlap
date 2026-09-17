@@ -129,6 +129,19 @@ export type ModelSelection = typeof ModelSelection.Type;
 export const ProviderRoutingMode = Schema.Literals(["fixed", "auto"]);
 export type ProviderRoutingMode = typeof ProviderRoutingMode.Type;
 
+/**
+ * The only details a server writes on `provider.account.route.failed` activities.
+ * Clients show a detail only when it is one of these; anything else (older servers,
+ * raw provider errors) is replaced with a generic description.
+ */
+export const PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS = {
+  notConfigured: "Automatic switching is not fully configured. The message was not sent.",
+  noEligibleAccount: "No eligible provider account is available. The message was not sent.",
+  targetStartFailed: "The other provider account could not be started.",
+  noTargetStarted: "No eligible provider account could be started.",
+  commitFailed: "The provider account switch could not be saved.",
+} as const;
+
 export const RuntimeMode = Schema.Literals([
   "approval-required",
   "auto-accept-edits",

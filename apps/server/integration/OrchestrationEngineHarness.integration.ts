@@ -316,6 +316,7 @@ export const makeOrchestrationIntegrationHarness = (
       ProjectionCheckpointRepositoryLive,
       ProjectionPendingApprovalRepositoryLive,
       ProjectionTurnRepositoryLive,
+      OrchestrationEventStoreLive,
       checkpointStoreLayer,
       providerLayer,
       RuntimeReceiptBusTest,

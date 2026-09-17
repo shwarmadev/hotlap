@@ -2,9 +2,12 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderRoutingMode,
-  ProviderRoutingPolicy,
   ServerProvider,
+  ServerSettings,
 } from "@t3tools/contracts";
+
+import { resolveDefaultProviderModelSelection } from "../../providerInstances";
+import type { ProviderRoutingPolicyPatch } from "./scopedSettings";
 
 const ROUTABLE_DRIVERS = new Set(["codex", "claudeAgent"]);
 
@@ -122,46 +125,6 @@ export function canEnableProviderRoutingAuto(
   );
 }
 
-export function canEnableProviderRoutingAutoForEveryPolicy(
-  options: ReadonlyArray<ProviderRoutingOption>,
-  policies: ReadonlyArray<ProviderRoutingPolicy>,
-  selectedAccount: { readonly instanceId: ProviderInstanceId } | null | undefined,
-): boolean {
-  return (
-    policies.length > 0 &&
-    policies.every((policy) =>
-      canEnableProviderRoutingAuto(
-        options,
-        policy.instanceIdsByDriver,
-        policy.usageThresholdPercent,
-        selectedAccount,
-      ),
-    )
-  );
-}
-
-export function providerRoutingPoolPatch(
-  policy: ProviderRoutingPolicy,
-  driver: ProviderDriverKind,
-  instanceIds: ReadonlyArray<ProviderInstanceId>,
-  options: ReadonlyArray<ProviderRoutingOption>,
-  selectedAccount: { readonly instanceId: ProviderInstanceId } | null | undefined,
-) {
-  const instanceIdsByDriver = { ...policy.instanceIdsByDriver, [driver]: instanceIds };
-  const shouldDisableAuto =
-    policy.defaultMode === "auto" &&
-    !canEnableProviderRoutingAuto(
-      options,
-      instanceIdsByDriver,
-      policy.usageThresholdPercent,
-      selectedAccount,
-    );
-  return {
-    ...(shouldDisableAuto ? { defaultMode: "fixed" as const } : {}),
-    instanceIdsByDriver: { [driver]: instanceIds },
-  };
-}
-
 export function resolveProviderRoutingDefaultMode(
   currentMode: ProviderRoutingMode,
   options: ReadonlyArray<ProviderRoutingOption>,
@@ -178,6 +141,72 @@ export function resolveProviderRoutingDefaultMode(
     )
     ? "fixed"
     : currentMode;
+}
+
+/** One settings target: its effective settings and its own environment's providers. */
+interface ProviderRoutingTarget {
+  readonly settings: Pick<ServerSettings, "providerRoutingPolicy" | "defaultModelSelection">;
+  readonly providers: ReadonlyArray<ServerProvider>;
+}
+
+/**
+ * Completes one target's routing-policy edit, judged only by that target's own
+ * environment accounts and default account. Auto that would be invalid there
+ * is saved as Fixed, so a multi-environment edit never enables an invalid
+ * policy. Returns null when the policy does not change.
+ */
+export function resolveTargetProviderRoutingPolicyPatch(
+  input: ProviderRoutingTarget & { readonly patch: ProviderRoutingPolicyPatch },
+): ProviderRoutingPolicyPatch | null {
+  const policy = input.settings.providerRoutingPolicy;
+  const requestedMode = input.patch.defaultMode ?? policy.defaultMode;
+  const nextMode = resolveProviderRoutingDefaultMode(
+    requestedMode,
+    deriveProviderRoutingOptions([input.providers]),
+    { ...policy.instanceIdsByDriver, ...input.patch.instanceIdsByDriver },
+    input.patch.usageThresholdPercent === undefined
+      ? policy.usageThresholdPercent
+      : input.patch.usageThresholdPercent,
+    resolveDefaultProviderModelSelection(input.providers, input.settings.defaultModelSelection),
+  );
+  const patch =
+    nextMode === requestedMode ? input.patch : { ...input.patch, defaultMode: nextMode };
+  return Object.keys(patch).length === 0 ? null : patch;
+}
+
+/**
+ * A threshold edit never re-validates accounts: providers report `warning` right
+ * after a restart, and nudging the threshold must not silently switch Auto off.
+ * Only an invalid threshold forces Fixed.
+ */
+/**
+ * Number inputs report every keystroke, including the empty field between edits
+ * (`null`) and in-progress values. Only a valid threshold is saved, so clearing
+ * the field to retype it never disables Auto behind the user's back.
+ */
+export function providerRoutingThresholdPatch(
+  usageThresholdPercent: number | null,
+): ProviderRoutingPolicyPatch | null {
+  const valid =
+    usageThresholdPercent !== null &&
+    Number.isInteger(usageThresholdPercent) &&
+    usageThresholdPercent >= 1 &&
+    usageThresholdPercent <= 100;
+  return valid ? { usageThresholdPercent } : null;
+}
+
+/** Whether Auto is valid on every target, each judged by its own environment. */
+export function canEnableProviderRoutingAutoOnEveryTarget(
+  targets: ReadonlyArray<ProviderRoutingTarget>,
+): boolean {
+  return (
+    targets.length > 0 &&
+    targets.every(
+      (target) =>
+        resolveTargetProviderRoutingPolicyPatch({ ...target, patch: { defaultMode: "auto" } })
+          ?.defaultMode === "auto",
+    )
+  );
 }
 
 export function supportsProviderAccountRouting(capabilities: object | null | undefined): boolean {

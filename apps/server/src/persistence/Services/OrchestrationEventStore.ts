@@ -9,9 +9,10 @@
  *
  * @module OrchestrationEventStore
  */
-import { OrchestrationEvent } from "@t3tools/contracts";
+import { MessageId, OrchestrationEvent, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as Option from "effect/Option";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationEventStoreError } from "../Errors.ts";
@@ -72,6 +73,18 @@ export interface OrchestrationEventStoreShape {
   readonly getAggregateReplayStats: (
     input: OrchestrationAggregateReplayRange & { readonly maxEvents: number },
   ) => Effect.Effect<OrchestrationAggregateReplayStats, OrchestrationEventStoreError>;
+
+  /**
+   * Find the newest turn start request for one message. Walks the thread
+   * newest-first and decodes only the match, so recovery never replays history.
+   */
+  readonly findTurnStartRequest: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+  }) => Effect.Effect<
+    Option.Option<Extract<OrchestrationEvent, { type: "thread.turn-start-requested" }>>,
+    OrchestrationEventStoreError
+  >;
 
   /**
    * Read all events from the beginning of the stream.

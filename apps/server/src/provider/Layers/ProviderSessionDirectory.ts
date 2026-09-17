@@ -1,4 +1,10 @@
-import { defaultInstanceIdForDriver, ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
+import {
+  defaultInstanceIdForDriver,
+  MessageId,
+  ProviderDriverKind,
+  TurnId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -12,6 +18,7 @@ import {
   type ProviderRuntimeBinding,
   type ProviderRuntimeBindingWithMetadata,
   type ProviderSessionDirectoryShape,
+  type ProviderSessionDirectoryUpsertOptions,
 } from "../Services/ProviderSessionDirectory.ts";
 const decodeProviderDriverKindValue = Schema.decodeUnknownEffect(ProviderDriverKind);
 
@@ -57,6 +64,42 @@ function mergeRuntimePayload(
   return next;
 }
 
+/**
+ * Add or remove one message from the sends dispatched to a provider but not yet
+ * admitted. Each send owns only its own entry, so overlapping sends keep theirs.
+ */
+export function withDispatchingMessage(
+  runtimePayload: Record<string, unknown>,
+  messageId: MessageId,
+  dispatching: boolean,
+): Record<string, unknown> {
+  const current = runtimePayload.dispatchingMessageIds;
+  const others = (Array.isArray(current) ? current : []).filter((id) => id !== messageId);
+  return {
+    ...runtimePayload,
+    dispatchingMessageIds: dispatching ? [...others, messageId] : others,
+  };
+}
+
+/**
+ * Read what the runtime payload proves about one message. A confirmed admission
+ * wins over a dispatch marker; `turnId: null` means it may have been sent.
+ */
+export function readPersistedTurnAdmission(
+  runtimePayload: unknown,
+  messageId: MessageId,
+): { readonly turnId: TurnId | null; readonly active: boolean } | null {
+  if (!isRecord(runtimePayload)) return null;
+  const turnId = runtimePayload.lastAdmittedTurnId;
+  if (runtimePayload.lastAdmittedMessageId === messageId && typeof turnId === "string") {
+    return { turnId: TurnId.make(turnId), active: runtimePayload.activeTurnId === turnId };
+  }
+  const dispatching = runtimePayload.dispatchingMessageIds;
+  return Array.isArray(dispatching) && dispatching.includes(messageId)
+    ? { turnId: null, active: false }
+    : null;
+}
+
 function toRuntimeBinding(
   runtime: ProviderSessionRuntime.ProviderSessionRuntime,
   operation: string,
@@ -100,7 +143,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
       ),
     );
 
-  const upsert: ProviderSessionDirectoryShape["upsert"] = Effect.fn(function* (binding, options) {
+  const writeBinding = Effect.fn(function* (
+    binding: ProviderRuntimeBinding,
+    options: ProviderSessionDirectoryUpsertOptions | undefined,
+  ) {
     const existing = yield* repository
       .getByThreadId({ threadId: binding.threadId })
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:getByThreadId")));
@@ -125,6 +171,10 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
         issue: "providerInstanceId is required for provider session runtime bindings.",
       });
     }
+    const runtimePayload = mergeRuntimePayload(
+      existingRuntime?.runtimePayload ?? null,
+      binding.runtimePayload,
+    );
     yield* repository
       .upsert(
         {
@@ -143,15 +193,28 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
             binding.resumeCursor !== undefined
               ? binding.resumeCursor
               : (existingRuntime?.resumeCursor ?? null),
-          runtimePayload: mergeRuntimePayload(
-            existingRuntime?.runtimePayload ?? null,
-            binding.runtimePayload,
-          ),
+          runtimePayload:
+            options?.updateRuntimePayload === undefined
+              ? runtimePayload
+              : options.updateRuntimePayload(isRecord(runtimePayload) ? runtimePayload : {}),
         },
         options,
       )
       .pipe(Effect.mapError(toPersistenceError("ProviderSessionDirectory.upsert:upsert")));
   });
+
+  // Writers merge into the row they read, so a write landing in between would be
+  // lost. Ignoring inserts never merge into an existing row and need no lock.
+  const upsert: ProviderSessionDirectoryShape["upsert"] = (binding, options) =>
+    options?.onConflict === "ignore"
+      ? writeBinding(binding, options)
+      : repository
+          .withWriteTransaction(writeBinding(binding, options))
+          .pipe(
+            Effect.catchTag("PersistenceSqlError", (cause) =>
+              Effect.fail(toPersistenceError("ProviderSessionDirectory.upsert:transaction")(cause)),
+            ),
+          );
 
   const getProvider: ProviderSessionDirectoryShape["getProvider"] = (threadId) =>
     getBinding(threadId).pipe(
