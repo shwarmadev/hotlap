@@ -65,6 +65,7 @@ import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0050 from "./Migrations/050_ProjectionThreadPullRequests.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
 import Migration0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
+import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
 import { prepareMigrationLedgers, runHotlapMigrations } from "./HotlapMigrations.ts";
 
 /**
@@ -130,13 +131,21 @@ const migrationEffects = {
   50: Migration0050,
   51: Migration0051,
   52: Migration0052,
+  53: Migration0053,
 } as const;
 
-const migrationEntries = upstreamMigrationManifest.map(
+// Upstream migrations added after the shared manifest snapshot; fold them into
+// packages/shared/src/upstreamMigrationManifest.ts when that file is next updated.
+const serverMigrationManifest = [
+  ...upstreamMigrationManifest,
+  [53, "PullRequestFilesViewed"],
+] as const;
+
+const migrationEntries = serverMigrationManifest.map(
   ([id, name]) => [id, name, migrationEffects[id]] as const,
 );
 
-export const migrationManifest = upstreamMigrationManifest;
+export const migrationManifest = serverMigrationManifest;
 
 const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
