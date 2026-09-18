@@ -1,6 +1,5 @@
 import { RowPressable } from "../../components/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
-import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import type { ThreadMoveDestination } from "./threadOrder";
@@ -33,6 +32,7 @@ import { useComposerDraftHasUserContent } from "../../state/use-composer-drafts"
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import {
+  THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -98,96 +98,130 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
 /** Rounded-row radius shared with the v1 sidebar rows. */
 const SIDEBAR_V2_ROW_RADIUS = 12;
 
+function ThreadListV2Section(props: {
+  readonly label: string;
+  readonly pane?: "screen" | "sidebar";
+  readonly tone?: "default" | "snoozed";
+  readonly disclosure?: {
+    readonly expanded: boolean;
+    readonly disabled?: boolean;
+    readonly onToggle: () => void;
+    readonly accessibilityLabel: string;
+    readonly accessibilityHint: string;
+  };
+}) {
+  const snoozed = props.tone === "snoozed";
+  const className = cn(
+    "mb-1.5 mt-4 flex-row items-center gap-2.5",
+    props.pane === "sidebar" ? "px-3" : "px-5",
+  );
+  const content = (
+    <>
+      <Text
+        className={cn(
+          "text-xs font-t3-medium",
+          snoozed ? "text-foreground-secondary" : "text-foreground-tertiary",
+        )}
+      >
+        {props.label}
+      </Text>
+      <View className={cn("h-px flex-1", snoozed ? "bg-primary/20" : "bg-border")} />
+      {props.disclosure ? (
+        <SymbolView
+          name="chevron.down"
+          size={10}
+          tintColorClassName={snoozed ? "accent-icon-muted" : "accent-foreground-muted"}
+          type="monochrome"
+          style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
+        />
+      ) : null}
+    </>
+  );
+
+  return props.disclosure ? (
+    <Pressable
+      accessibilityHint={props.disclosure.accessibilityHint}
+      accessibilityLabel={props.disclosure.accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{
+        disabled: props.disclosure.disabled,
+        expanded: props.disclosure.expanded,
+      }}
+      className={className}
+      disabled={props.disclosure.disabled}
+      onPress={props.disclosure.onToggle}
+      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+    >
+      {content}
+    </Pressable>
+  ) : (
+    <View className={className}>{content}</View>
+  );
+}
+
 /** Section label + rule: the only structure in an otherwise flat list. */
 export const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
-  return (
-    <View
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-    >
-      <Text className="text-xs font-t3-medium text-foreground-tertiary">{props.label}</Text>
-      <View className="h-px flex-1 bg-border" />
-    </View>
-  );
+  return <ThreadListV2Section {...props} />;
 });
 
-export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(props: {
+type ThreadListV2ShelfHeaderProps = {
   readonly count: number;
   readonly disabled?: boolean;
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly pane?: "screen" | "sidebar";
-}) {
+};
+
+function ThreadListV2ShelfHeader(
+  props: ThreadListV2ShelfHeaderProps & { readonly kind: "snoozed" | "settled" },
+) {
+  const label = props.kind === "snoozed" ? "Snoozed" : "Settled";
   return (
-    <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the snoozed threads." : "Expands the snoozed threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 snoozed thread" : `${props.count} snoozed threads`}
-      accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-      disabled={props.disabled}
-      onPress={props.onToggle}
-      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-    >
-      <Text className="text-xs font-t3-medium text-foreground-secondary">
-        {props.expanded ? "Snoozed" : `Snoozed (${props.count})`}
-      </Text>
-      <View className="h-px flex-1 bg-primary/20" />
-      <SymbolView
-        name="chevron.down"
-        size={10}
-        tintColorClassName="accent-icon-muted"
-        type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
-      />
-    </Pressable>
+    <ThreadListV2Section
+      label={props.expanded ? label : `${label} (${props.count})`}
+      pane={props.pane}
+      tone={props.kind === "snoozed" ? "snoozed" : "default"}
+      disclosure={{
+        expanded: props.expanded,
+        disabled: props.disabled,
+        onToggle: props.onToggle,
+        accessibilityLabel: `${props.count} ${props.kind} ${props.count === 1 ? "thread" : "threads"}`,
+        accessibilityHint: `${props.expanded ? "Collapses" : "Expands"} the ${props.kind} threads.`,
+      }}
+    />
   );
+}
+
+export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
 });
 
-export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(props: {
-  readonly count: number;
-  readonly disabled?: boolean;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-  readonly pane?: "screen" | "sidebar";
+export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="settled" />;
+});
+
+export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
+  readonly hiddenCount: number;
+  readonly onPress: () => void;
 }) {
   return (
     <Pressable
-      accessibilityHint={
-        props.expanded ? "Collapses the settled threads." : "Expands the settled threads."
-      }
-      accessibilityLabel={props.count === 1 ? "1 settled thread" : `${props.count} settled threads`}
       accessibilityRole="button"
-      accessibilityState={{ disabled: props.disabled, expanded: props.expanded }}
-      className={cn(
-        "mb-1.5 mt-4 flex-row items-center gap-2.5",
-        props.pane === "sidebar" ? "px-3" : "px-5",
-      )}
-      disabled={props.disabled}
-      onPress={props.onToggle}
+      accessibilityLabel={`Show ${Math.min(props.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+      onPress={props.onPress}
+      className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <Text className="text-xs font-t3-medium text-foreground-tertiary">
-        {props.expanded ? "Settled" : `Settled (${props.count})`}
+      <Text className="text-xs font-t3-medium text-foreground-muted">
+        Show more ({props.hiddenCount} settled hidden)
       </Text>
-      <View className="h-px flex-1 bg-border" />
-      <SymbolView
-        name="chevron.down"
-        size={10}
-        tintColorClassName={"accent-foreground-muted"}
-        type="monochrome"
-        style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
-      />
     </Pressable>
   );
 });
@@ -443,12 +477,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const pr = useThreadPr(thread);
 
-  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
   const drawerColor = theme["--color-drawer"];
   const selectedBackgroundColor =
-    theme[materialYouStyleLayoutActive ? "--color-thread-selected" : "--color-user-bubble"];
+    theme[Platform.OS === "android" ? "--color-thread-selected" : "--color-user-bubble"];
   const sidebarPane = props.pane === "sidebar";
   const selected = props.selected === true;
   // The provider badge's border blends into the row's own surface, which
@@ -458,7 +491,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const providerIconSurfaceColor = sidebarPane
     ? selected
       ? selectedBackgroundColor
-      : drawerColor
+      : Platform.OS === "android"
+        ? screenColor
+        : drawerColor
     : screenColor;
 
   const hasUnsentDraft = useComposerDraftHasUserContent(`${thread.environmentId}:${thread.id}`);
@@ -760,7 +795,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           className={cn(
             "flex-1 text-sm font-t3-medium",
             selected
-              ? materialYouStyleLayoutActive
+              ? Platform.OS === "android"
                 ? "text-thread-selected-foreground-muted"
                 : "text-user-bubble-foreground-muted"
               : "text-foreground-muted",
@@ -774,7 +809,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <SymbolView
             name="pin"
             size={11}
-            tintColorClassName={"accent-foreground-muted"}
+            tintColorClassName="accent-foreground-muted"
             type="monochrome"
           />
         ) : null}
@@ -782,7 +817,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           className={cn(
             "text-xs tabular-nums",
             selected
-              ? materialYouStyleLayoutActive
+              ? Platform.OS === "android"
                 ? "text-thread-selected-foreground"
                 : "text-user-bubble-foreground"
               : (statusLabel?.className ?? "text-foreground-tertiary"),
@@ -795,7 +830,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         className={cn(
           "mt-1 text-base font-t3-medium",
           selected
-            ? materialYouStyleLayoutActive
+            ? Platform.OS === "android"
               ? "text-thread-selected-foreground"
               : "text-user-bubble-foreground"
             : "text-foreground",
@@ -819,7 +854,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             className={cn(
               "flex-1 text-xs",
               selected
-                ? materialYouStyleLayoutActive
+                ? Platform.OS === "android"
                   ? "text-thread-selected-foreground-muted"
                   : "text-user-bubble-foreground-muted"
                 : "text-danger-foreground",
@@ -840,7 +875,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               className={cn(
                 "shrink text-xs",
                 selected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground-muted"
                     : "text-user-bubble-foreground-muted"
                   : "text-foreground-muted",
@@ -852,7 +887,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   className={cn(
                     "text-xs",
                     selected
-                      ? materialYouStyleLayoutActive
+                      ? Platform.OS === "android"
                         ? "text-thread-selected-foreground-muted"
                         : "text-user-bubble-foreground-muted"
                       : "text-foreground-muted",
@@ -868,7 +903,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   className={cn(
                     "text-xs",
                     selected
-                      ? materialYouStyleLayoutActive
+                      ? Platform.OS === "android"
                         ? "text-thread-selected-foreground-muted"
                         : "text-user-bubble-foreground-muted"
                       : "text-foreground-tertiary",
@@ -884,7 +919,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 size={11}
                 tintColorClassName={
                   selected
-                    ? materialYouStyleLayoutActive
+                    ? Platform.OS === "android"
                       ? "accent-thread-selected-foreground-muted"
                       : "accent-user-bubble-foreground-muted"
                     : "accent-foreground-tertiary"
@@ -903,7 +938,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 size={12}
                 tintColorClassName={
                   selected
-                    ? materialYouStyleLayoutActive
+                    ? Platform.OS === "android"
                       ? "accent-thread-selected-foreground"
                       : "accent-user-bubble-foreground"
                     : pr.state === null || pr.isDraft
@@ -921,7 +956,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               className={cn(
                 "text-xs",
                 selected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground"
                     : "text-user-bubble-foreground"
                   : pr.textClassName,
@@ -951,13 +986,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={
-          selected && (sidebarPane || materialYouStyleLayoutActive)
-            ? materialYouStyleLayoutActive
+          selected && (sidebarPane || Platform.OS === "android")
+            ? Platform.OS === "android"
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
             : "bg-primary"
         }
-        className={sidebarPane || materialYouStyleLayoutActive ? undefined : "bg-screen"}
+        className={sidebarPane || Platform.OS === "android" ? undefined : "bg-screen"}
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
@@ -967,14 +1002,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           onSelectThread(thread);
         }}
         style={
-          sidebarPane || materialYouStyleLayoutActive
+          sidebarPane || Platform.OS === "android"
             ? {
                 backgroundColor: selected
                   ? selectedBackgroundColor
-                  : sidebarPane
+                  : sidebarPane && Platform.OS !== "android"
                     ? drawerColor
                     : screenColor,
-                borderRadius: SIDEBAR_V2_ROW_RADIUS,
+                borderRadius: Platform.OS === "android" ? 20 : SIDEBAR_V2_ROW_RADIUS,
                 ...(sidebarPane ? { paddingHorizontal: 12, paddingVertical: 10 } : null),
               }
             : undefined
@@ -988,8 +1023,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
              separates rows. The opaque screen background stays so swipe
              actions reveal behind the row. */
           <View>
-            <View className="px-5 py-2.5">{cardContent}</View>
-            {props.showTrailingDivider !== false ? (
+            <View className={Platform.OS === "android" ? "px-3 py-2.5" : "px-5 py-2.5"}>
+              {cardContent}
+            </View>
+            {Platform.OS !== "android" && props.showTrailingDivider !== false ? (
               <View className="ml-5 h-px bg-border-subtle" />
             ) : null}
           </View>
@@ -999,8 +1036,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       <RowPressable
         key={`${thread.environmentId}:${thread.id}`}
         interactionClassName={
-          selected && (sidebarPane || materialYouStyleLayoutActive)
-            ? materialYouStyleLayoutActive
+          selected && (sidebarPane || Platform.OS === "android")
+            ? Platform.OS === "android"
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
             : "bg-primary"
@@ -1009,20 +1046,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityLabel={threadAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
-        className={sidebarPane || materialYouStyleLayoutActive ? undefined : "bg-screen"}
+        className={sidebarPane || Platform.OS === "android" ? undefined : "bg-screen"}
         onPress={() => {
           close();
           onSelectThread(thread);
         }}
         style={
-          sidebarPane || materialYouStyleLayoutActive
+          sidebarPane || Platform.OS === "android"
             ? {
                 backgroundColor: selected
                   ? selectedBackgroundColor
-                  : sidebarPane
+                  : sidebarPane && Platform.OS !== "android"
                     ? drawerColor
                     : screenColor,
-                borderRadius: SIDEBAR_V2_ROW_RADIUS,
+                borderRadius: Platform.OS === "android" ? 20 : SIDEBAR_V2_ROW_RADIUS,
               }
             : undefined
         }
@@ -1050,7 +1087,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               className={cn(
                 "text-base",
                 selected
-                  ? materialYouStyleLayoutActive
+                  ? Platform.OS === "android"
                     ? "text-thread-selected-foreground"
                     : "text-user-bubble-foreground"
                   : "text-foreground-muted",
@@ -1072,7 +1109,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             className={cn(
               "text-sm tabular-nums",
               selected
-                ? materialYouStyleLayoutActive
+                ? Platform.OS === "android"
                   ? "text-thread-selected-foreground-muted"
                   : "text-user-bubble-foreground-muted"
                 : snoozedRow
@@ -1090,16 +1127,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   return (
-    <>
+    <View collapsable={false}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
       <ThreadSwipeable
         threadKey={`${thread.environmentId}:${thread.id}`}
-        backgroundColor={sidebarPane ? drawerColor : screenColor}
+        backgroundColor={sidebarPane && Platform.OS !== "android" ? drawerColor : screenColor}
         compactActions={variant === "slim"}
         containerStyle={
-          sidebarPane ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" } : undefined
+          Platform.OS === "android"
+            ? { borderRadius: 20, overflow: "hidden", marginHorizontal: 8, marginVertical: 2 }
+            : sidebarPane
+              ? { borderRadius: SIDEBAR_V2_ROW_RADIUS, overflow: "hidden" }
+              : undefined
         }
         enableTrackpadSwipe
         // Full swipe commits the advertised lifecycle action (Settle /
@@ -1147,6 +1188,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </ControlPillMenu>
         )}
       </ThreadSwipeable>
-    </>
+    </View>
   );
 });

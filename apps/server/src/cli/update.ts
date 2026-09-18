@@ -43,6 +43,7 @@ import { compareExactServiceVersions, isExactServiceVersion } from "../cloud/ser
 import * as ProcessRunner from "../processRunner.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { createUpdateProgress } from "./updateProgress.ts";
 import { bootServiceLayer } from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
@@ -364,7 +365,13 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       reason: `'${input.requestedVersion}' is not an exact Hotlap version.`,
     });
   }
-  const targetVersion = input.requestedVersion ?? (yield* resolveNewestVersion(channel));
+  const progress = createUpdateProgress();
+  progress.status("Checking for updates...");
+  const targetVersion = yield* (
+    input.requestedVersion === undefined
+      ? resolveNewestVersion(channel)
+      : Effect.succeed(input.requestedVersion)
+  ).pipe(Effect.ensuring(Effect.sync(progress.finish)));
   const targetChannel = cliReleaseChannelOf(targetVersion);
 
   // Preview is a maintainers' dogfooding train: it is cut by hand from
@@ -453,14 +460,17 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       Effect.orElseSucceed(() => false),
     );
 
-  yield* Console.log(
+  progress.heading(
     executableCurrent && restartPending
       ? `The background service is still running the version before ${targetVersion} (${targetChannel}).`
       : executableCurrent
         ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
         : alreadyOnDisk
-          ? `Switching Hotlap ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
-          : `Updating Hotlap ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
+          ? "Switching Hotlap"
+          : "Updating Hotlap",
+    executableCurrent
+      ? ""
+      : `${currentVersion} → ${targetVersion}${targetChannel === "stable" ? "" : ` (${targetChannel})`}`,
   );
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
@@ -484,6 +494,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
 
   const runtime = yield* ensurePinnedRuntimeInstalled({
+    onProgress: progress.report,
     baseDir: input.baseDir,
     version: targetVersion,
     fs,
@@ -518,6 +529,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           ),
         ),
   }).pipe(
+    Effect.ensuring(Effect.sync(progress.finish)),
     Effect.catchIf(
       (error): error is PinnedRuntimeInstallError =>
         error._tag === "PinnedRuntimeInstallError" &&
@@ -547,6 +559,11 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // version; only the restart itself waits for the user's answer.
   let serviceUpdated = false;
   if (serviceInstalled && !serviceCurrent) {
+    yield* Console.log(
+      restartService
+        ? "Restarting the background service..."
+        : "Updating the background service...",
+    );
     yield* BootService.BootService.pipe(
       Effect.flatMap((target) =>
         target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
@@ -568,8 +585,8 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serviceUpdated = restartService;
   }
 
-  yield* Console.log("");
-  yield* Console.log(`Hotlap ${targetVersion} is installed at ${runtime.entryPath}`);
+  progress.success(`Installed Hotlap ${targetVersion}`);
+  yield* Console.log(`  Hotlap ${targetVersion} is installed at ${runtime.entryPath}`);
   if (Option.isSome(repointed)) {
     yield* Console.log(`  ${repointed.value} now runs ${targetVersion}`);
   } else {
