@@ -251,7 +251,11 @@ export const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function*
     if (worktreeHome !== undefined) {
       bases.push(worktreeHome);
     }
+<<<<<<< HEAD
     const envHome = yield* dataHomeEnv;
+=======
+    const envHome = yield* Config.String("T3CODE_HOME").pipe(Config.option);
+>>>>>>> 56a9bf2bd7d3dcdae722a5de84578909dc11aeda
     bases.push(yield* resolveBaseDir(Option.getOrUndefined(envHome)));
   }
 
@@ -447,7 +451,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
   );
 });
 
-const ttlFlag = Flag.string("ttl").pipe(
+const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
   Flag.withDescription(
     "Token TTL, for example `5m`, `1h`, or `15 minutes`. Defaults to 5 minutes.",
@@ -455,19 +459,19 @@ const ttlFlag = Flag.string("ttl").pipe(
   Flag.optional,
 );
 
-const labelFlag = Flag.string("label").pipe(
+const labelFlag = Flag.String("label").pipe(
   Flag.withDescription("Optional label shown in the server's connections list."),
   Flag.optional,
 );
 
-const tailscaleFlag = Flag.boolean("tailscale").pipe(
+const tailscaleFlag = Flag.Boolean("tailscale").pipe(
   Flag.withDescription(
     "Publish the server over Tailscale Serve HTTPS and pair through the tailnet URL.",
   ),
   Flag.withDefault(false),
 );
 
-const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
+const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale is enabled."),
   Flag.withDefault(DEFAULT_TAILSCALE_SERVE_PORT),

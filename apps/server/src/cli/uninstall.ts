@@ -101,7 +101,7 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
 
 export const uninstallCommand = Command.make("uninstall", {
   ...projectLocationFlags,
-  yes: Flag.boolean("yes").pipe(
+  yes: Flag.Boolean("yes").pipe(
     Flag.withAlias("y"),
     Flag.withDescription(
       "Remove everything without asking. Required from a script, where there is no prompt.",
@@ -161,7 +161,11 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
       });
     }
     const confirmed = yield* Prompt.run(
+<<<<<<< HEAD
       Prompt.confirm({ message: "Remove Hotlap from this machine?", initial: false }),
+=======
+      Prompt.Confirm({ message: "Remove t3 from this machine?", initial: false }),
+>>>>>>> 56a9bf2bd7d3dcdae722a5de84578909dc11aeda
     ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
     if (!confirmed) {
       yield* Console.log("Left as is.");
