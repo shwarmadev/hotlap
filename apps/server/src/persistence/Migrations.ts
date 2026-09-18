@@ -65,7 +65,11 @@ import Migration0049 from "./Migrations/049_ProjectionThreadsActiveOrderKey.ts";
 import Migration0050 from "./Migrations/050_ProjectionThreadPullRequests.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
 import Migration0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
+<<<<<<< HEAD
 import { prepareMigrationLedgers, runHotlapMigrations } from "./HotlapMigrations.ts";
+=======
+import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
+>>>>>>> 82cd1d1aabe8baa4a5ae23f3c7b08b3fce092e08
 
 /**
  * Migration loader with all migrations defined inline.
@@ -77,6 +81,7 @@ import { prepareMigrationLedgers, runHotlapMigrations } from "./HotlapMigrations
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
+<<<<<<< HEAD
 const migrationEffects = {
   1: Migration0001,
   2: Migration0002,
@@ -131,6 +136,63 @@ const migrationEffects = {
   51: Migration0051,
   52: Migration0052,
 } as const;
+=======
+const migrationEntries = [
+  [1, "OrchestrationEvents", Migration0001],
+  [2, "OrchestrationCommandReceipts", Migration0002],
+  [3, "CheckpointDiffBlobs", Migration0003],
+  [4, "ProviderSessionRuntime", Migration0004],
+  [5, "Projections", Migration0005],
+  [6, "ProjectionThreadSessionRuntimeModeColumns", Migration0006],
+  [7, "ProjectionThreadMessageAttachments", Migration0007],
+  [8, "ProjectionThreadActivitySequence", Migration0008],
+  [9, "ProviderSessionRuntimeMode", Migration0009],
+  [10, "ProjectionThreadsRuntimeMode", Migration0010],
+  [11, "OrchestrationThreadCreatedRuntimeMode", Migration0011],
+  [12, "ProjectionThreadsInteractionMode", Migration0012],
+  [13, "ProjectionThreadProposedPlans", Migration0013],
+  [14, "ProjectionThreadProposedPlanImplementation", Migration0014],
+  [15, "ProjectionTurnsSourceProposedPlan", Migration0015],
+  [16, "CanonicalizeModelSelections", Migration0016],
+  [17, "ProjectionThreadsArchivedAt", Migration0017],
+  [18, "ProjectionThreadsArchivedAtIndex", Migration0018],
+  [19, "ProjectionSnapshotLookupIndexes", Migration0019],
+  [20, "AuthAccessManagement", Migration0020],
+  [21, "AuthSessionClientMetadata", Migration0021],
+  [22, "AuthSessionLastConnectedAt", Migration0022],
+  [23, "ProjectionThreadShellSummary", Migration0023],
+  [24, "BackfillProjectionThreadShellSummary", Migration0024],
+  [25, "CleanupInvalidProjectionPendingApprovals", Migration0025],
+  [26, "CanonicalizeModelSelectionOptions", Migration0026],
+  [27, "ProviderSessionRuntimeInstanceId", Migration0027],
+  [28, "ProjectionThreadSessionInstanceId", Migration0028],
+  [29, "ProjectionThreadDetailOrderingIndexes", Migration0029],
+  [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
+  [31, "AuthAuthorizationScopes", Migration0031],
+  [32, "AuthPairingProofKeyThumbprint", Migration0032],
+  [33, "ProjectionThreadsSettled", Migration0033],
+  [34, "ProjectionThreadsSnoozed", Migration0034],
+  [35, "ProjectionThreadTitleRegeneration", Migration0035],
+  [36, "ProjectionThreadsPinned", Migration0036],
+  [37, "ProjectionTurnsKeysetIndex", Migration0037],
+  [38, "ProjectionThreadsPinOrderKey", Migration0038],
+  [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
+  [40, "ProjectionProjectFaviconPath", Migration0040],
+  [41, "AuthSessionClientConnection", Migration0041],
+  [42, "ProjectionThreadLinkedPullRequest", Migration0042],
+  [43, "ProjectionThreadsUnsettledAt", Migration0043],
+  [44, "ClearAutomaticProjectModelDefaults", Migration0044],
+  [45, "ProjectionProjectsAutoPull", Migration0045],
+  [46, "RepairAutomaticSettlementTimestamps", Migration0046],
+  [47, "ProjectionProjectIcon", Migration0047],
+  [48, "ProjectionThreadBranchPullRequest", Migration0048],
+  [49, "ProjectionThreadsActiveOrderKey", Migration0049],
+  [50, "ProjectionThreadPullRequests", Migration0050],
+  [51, "ProjectionThreadMessageContext", Migration0051],
+  [52, "ProjectionThreadTitleState", Migration0052],
+  [53, "PullRequestFilesViewed", Migration0053],
+] as const;
+>>>>>>> 82cd1d1aabe8baa4a5ae23f3c7b08b3fce092e08
 
 const migrationEntries = upstreamMigrationManifest.map(
   ([id, name]) => [id, name, migrationEffects[id]] as const,

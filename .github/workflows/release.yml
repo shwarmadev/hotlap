@@ -294,10 +294,9 @@ jobs:
       clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ steps.public_config.outputs.relay_url }}
     steps:
-      # Upstream fills this file from the deployed relay with
-      # `deploy --read-state --github-output --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"`.
-      # infra/relay/scripts/deploy.test.ts checks the config still crosses jobs as
-      # that file, so the empty config takes the same path.
+      # Upstream fills this file from the deployed relay's Alchemy state
+      # (`alchemy state read T3CodeRelay/prod/output`). Hotlap has no deployed
+      # relay, so the empty config takes the same artifact path.
       - id: relay_state
         name: Write empty relay tracing config
         shell: bash
