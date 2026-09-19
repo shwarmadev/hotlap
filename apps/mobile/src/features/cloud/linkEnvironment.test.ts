@@ -4,20 +4,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
-import { DPOP_UNKNOWN_HINT, ManagedRelay } from "@t3tools/client-runtime/relay";
+import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import { remoteHttpClientLayer } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/unstable/http";
-import { MobilePreferencesStore } from "../../persistence/mobile-preferences";
+
 import { MobileStorage } from "../../persistence/mobile-storage";
 
-import {
-  linkEnvironmentToCloud,
-  linkEnvironmentToCloudWithPreference,
-  connectCloudEnvironment,
-  listCloudEnvironments,
-  listCloudEnvironmentsWithStatus,
-  refreshCloudEnvironmentConnection,
-} from "./linkEnvironment";
+import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -56,8 +49,6 @@ vi.mock("expo-secure-store", () => ({
   setItemAsync: vi.fn(),
 }));
 
-const loadPreferences = vi.fn(() => Effect.succeed({}));
-
 const savedConnection = {
   environmentId: EnvironmentId.make("env-1"),
   environmentLabel: "Desktop",
@@ -67,8 +58,6 @@ const savedConnection = {
   wsBaseUrl: "wss://desktop.example.test/ws",
   bearerToken: "local-bearer",
 };
-
-const stableClerkToken = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ1c2VyXzEyMyJ9.test";
 
 const createProofMock = vi.fn(
   (input: { readonly method: string; readonly url: string; readonly accessToken?: string }) =>
@@ -86,14 +75,6 @@ function cloudClientLayer() {
   const httpClientLayer = remoteHttpClientLayer((input, init) => globalThis.fetch(input, init));
   return Layer.mergeAll(
     httpClientLayer,
-    Layer.succeed(
-      MobilePreferencesStore,
-      MobilePreferencesStore.of({
-        load: loadPreferences(),
-        savePatch: (patch) => Effect.succeed(patch),
-        update: () => Effect.succeed({}),
-      }),
-    ),
     Layer.succeed(
       MobileStorage,
       MobileStorage.of({
@@ -123,7 +104,6 @@ const withCloudServices = <A, E>(
     | HttpClient.HttpClient
     | ManagedRelay.ManagedRelayClient
     | ManagedRelay.ManagedRelayDpopSigner
-    | MobilePreferencesStore
     | MobileStorage
   >,
 ) => effect.pipe(Effect.provide(cloudClientLayer()));
@@ -163,36 +143,13 @@ function requestBodyText(body: BodyInit | null | undefined): string {
   return body instanceof Uint8Array ? new TextDecoder().decode(body) : String(body ?? "");
 }
 
-function validDpopAccessTokenResponse(scope = "environment:status environment:connect") {
-  return {
-    access_token: "relay-dpop-token",
-    issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    token_type: "DPoP",
-    expires_in: 300,
-    scope,
-  };
-}
-
-function listedEnvironment(environmentId: string) {
-  return {
-    environmentId: EnvironmentId.make(environmentId),
-    label: "Desktop",
-    endpoint: {
-      httpBaseUrl: `https://${environmentId}.example.test/`,
-      wsBaseUrl: `wss://${environmentId}.example.test/ws`,
-      providerKind: "cloudflare_tunnel" as const,
-    },
-    linkedAt: "2026-05-25T00:00:00.000Z",
-  };
-}
-
 describe("mobile cloud link environment client", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     createProofMock.mockClear();
-    loadPreferences.mockClear();
   });
 
+<<<<<<< HEAD
   it.effect("decodes relay environment list responses before returning records", () =>
     Effect.gen(function* () {
       vi.stubGlobal(
@@ -596,6 +553,8 @@ describe("mobile cloud link environment client", () => {
     }),
   );
 
+=======
+>>>>>>> 7a326c244f72d6421c2f1cbf004d55806c631526
   it.effect(
     "rejects relay link credentials for a different environment before persisting relay config",
     () =>
@@ -612,9 +571,10 @@ describe("mobile cloud link environment client", () => {
         vi.stubGlobal("fetch", fetchMock);
 
         const error = yield* withCloudServices(
-          linkEnvironmentToCloud({
+          linkEnvironmentToCloudWithPreference({
             clerkToken: "clerk-token",
             connection: savedConnection,
+            liveActivitiesEnabled: true,
           }),
         ).pipe(Effect.flip);
         expect(error).toMatchObject({
@@ -644,9 +604,10 @@ describe("mobile cloud link environment client", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
+        linkEnvironmentToCloudWithPreference({
           clerkToken: "clerk-token",
           connection: savedConnection,
+          liveActivitiesEnabled: true,
         }),
       ).pipe(Effect.flip);
       expect(error._tag).toBe("CloudEnvironmentLinkError");
@@ -681,9 +642,10 @@ describe("mobile cloud link environment client", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
+        linkEnvironmentToCloudWithPreference({
           clerkToken: "clerk-token",
           connection: savedConnection,
+          liveActivitiesEnabled: true,
         }),
       ).pipe(Effect.flip);
       expect(error).toMatchObject({
@@ -718,9 +680,10 @@ describe("mobile cloud link environment client", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const error = yield* withCloudServices(
-        linkEnvironmentToCloud({
+        linkEnvironmentToCloudWithPreference({
           clerkToken: "clerk-token",
           connection: savedConnection,
+          liveActivitiesEnabled: true,
         }),
       ).pipe(Effect.flip);
       expect(error).toMatchObject({
@@ -733,7 +696,6 @@ describe("mobile cloud link environment client", () => {
 
   it.effect("preserves disabled Live Activity preferences when linking an environment", () =>
     Effect.gen(function* () {
-      loadPreferences.mockReturnValueOnce(Effect.succeed({ liveActivitiesEnabled: false }));
       const bodies: Array<unknown> = [];
       const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
         if (init?.body) {
@@ -756,9 +718,10 @@ describe("mobile cloud link environment client", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       yield* withCloudServices(
-        linkEnvironmentToCloud({
+        linkEnvironmentToCloudWithPreference({
           clerkToken: "clerk-token",
           connection: savedConnection,
+          liveActivitiesEnabled: false,
         }),
       );
 
@@ -786,9 +749,8 @@ describe("mobile cloud link environment client", () => {
     }),
   );
 
-  it.effect("uses an explicit Live Activity preference when persisted state is unavailable", () =>
+  it.effect("enables Live Activities for both the link challenge and registration", () =>
     Effect.gen(function* () {
-      loadPreferences.mockReturnValueOnce(Effect.die("persisted preferences must not be read"));
       const bodies: Array<Record<string, unknown>> = [];
       const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
         if (init?.body) {
@@ -823,430 +785,5 @@ describe("mobile cloud link environment client", () => {
         expect.objectContaining({ liveActivitiesEnabled: true }),
       ]);
     }),
-  );
-
-  it.effect(
-    "does not persist cloud connect bootstrap credentials in saved connection records",
-    () =>
-      Effect.gen(function* () {
-        let connectRequestBody = "";
-        const fetchMock = vi.fn((url: string | URL, init?: RequestInit) => {
-          if (String(url).endsWith("/v1/client/dpop-token")) {
-            return Promise.resolve(
-              Response.json(validDpopAccessTokenResponse("environment:connect")),
-            );
-          }
-          if (String(url).endsWith("/.well-known/t3/environment")) {
-            return Promise.resolve(
-              Response.json({
-                environmentId: "env-1",
-                label: "Desktop",
-                platform: { os: "darwin", arch: "arm64" },
-                serverVersion: "0.0.0-test",
-                capabilities: { repositoryIdentity: true },
-              }),
-            );
-          }
-          if (String(url).endsWith("/oauth/token")) {
-            return Promise.resolve(
-              Response.json({
-                access_token: "environment-dpop-token",
-                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-                token_type: "DPoP",
-                expires_in: 3600,
-                scope: "orchestration:read orchestration:operate terminal:operate review:write",
-              }),
-            );
-          }
-          connectRequestBody = requestBodyText(init?.body);
-          return Promise.resolve(
-            Response.json({
-              environmentId: "env-1",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test/",
-                wsBaseUrl: "wss://desktop.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              credential: "one-time-cloud-credential",
-              expiresAt: "2026-05-25T00:05:00.000Z",
-            }),
-          );
-        });
-        vi.stubGlobal("fetch", fetchMock);
-
-        const connection = yield* withCloudServices(
-          connectCloudEnvironment({
-            clerkToken: "clerk-token",
-            environment: {
-              environmentId: EnvironmentId.make("env-1"),
-              label: "Desktop",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test/",
-                wsBaseUrl: "wss://desktop.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              linkedAt: "2026-05-25T00:00:00.000Z",
-            },
-          }),
-        );
-
-        expect(connection.pairingUrl).toBe("https://desktop.example.test/");
-        expect(connection.pairingUrl).not.toContain("one-time-cloud-credential");
-        expect(connection.bearerToken).toBeNull();
-        expect(connection.authenticationMethod).toBe("dpop");
-        expect(connection.dpopAccessToken).toBe("environment-dpop-token");
-        expect(connection.relayManaged).toBe(true);
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        expect(JSON.parse(connectRequestBody)).toMatchObject({
-          deviceId: "device-1",
-          clientKeyThumbprint: "client-proof-key-thumbprint",
-        });
-        expect(createProofMock).toHaveBeenCalledWith({
-          method: "POST",
-          url: "https://relay.example.test/v1/environments/env-1/connect",
-          accessToken: "relay-dpop-token",
-        });
-        expect(createProofMock).toHaveBeenCalledWith({
-          method: "POST",
-          url: "https://desktop.example.test/oauth/token",
-        });
-      }),
-  );
-
-  it.effect("refreshes a saved environment against a rotated managed endpoint", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((url: string | URL) => {
-          if (String(url).endsWith("/v1/client/dpop-token")) {
-            return Promise.resolve(
-              Response.json(validDpopAccessTokenResponse("environment:connect")),
-            );
-          }
-          if (String(url).endsWith("/.well-known/t3/environment")) {
-            return Promise.resolve(
-              Response.json({
-                environmentId: "env-1",
-                label: "Rotated Desktop",
-                platform: { os: "darwin", arch: "arm64" },
-                serverVersion: "0.0.0-test",
-                capabilities: { repositoryIdentity: true },
-              }),
-            );
-          }
-          if (String(url).endsWith("/oauth/token")) {
-            return Promise.resolve(
-              Response.json({
-                access_token: "fresh-environment-dpop-token",
-                issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-                token_type: "DPoP",
-                expires_in: 3600,
-                scope: "orchestration:read orchestration:operate terminal:operate review:write",
-              }),
-            );
-          }
-          return Promise.resolve(
-            Response.json({
-              environmentId: "env-1",
-              endpoint: {
-                httpBaseUrl: "https://rotated-desktop.example.test/",
-                wsBaseUrl: "wss://rotated-desktop.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              credential: "rotated-one-time-cloud-credential",
-              expiresAt: "2026-05-25T00:05:00.000Z",
-            }),
-          );
-        }),
-      );
-
-      const connection = yield* withCloudServices(
-        refreshCloudEnvironmentConnection({
-          clerkToken: "clerk-token",
-          connection: {
-            environmentId: EnvironmentId.make("env-1"),
-            environmentLabel: "Desktop",
-            pairingUrl: "https://desktop.example.test/",
-            displayUrl: "https://desktop.example.test/",
-            httpBaseUrl: "https://desktop.example.test/",
-            wsBaseUrl: "wss://desktop.example.test/ws",
-            bearerToken: null,
-            authenticationMethod: "dpop",
-            relayManaged: true,
-          },
-        }),
-      );
-
-      expect(connection).toMatchObject({
-        environmentId: "env-1",
-        environmentLabel: "Rotated Desktop",
-        displayUrl: "https://rotated-desktop.example.test/",
-        httpBaseUrl: "https://rotated-desktop.example.test/",
-        wsBaseUrl: "wss://rotated-desktop.example.test/ws",
-        dpopAccessToken: "fresh-environment-dpop-token",
-      });
-    }),
-  );
-
-  it.effect("rejects relay connect responses for a different environment", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((url: string | URL) =>
-          Promise.resolve(
-            String(url).endsWith("/v1/client/dpop-token")
-              ? Response.json(validDpopAccessTokenResponse("environment:connect"))
-              : Response.json({
-                  environmentId: "env-other",
-                  endpoint: {
-                    httpBaseUrl: "https://desktop.example.test/",
-                    wsBaseUrl: "wss://desktop.example.test/ws",
-                    providerKind: "cloudflare_tunnel",
-                  },
-                  credential: "one-time-cloud-credential",
-                  expiresAt: "2026-05-25T00:05:00.000Z",
-                }),
-          ),
-        ),
-      );
-
-      const error = yield* withCloudServices(
-        connectCloudEnvironment({
-          clerkToken: "clerk-token",
-          environment: {
-            environmentId: EnvironmentId.make("env-1"),
-            label: "Desktop",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test/",
-              wsBaseUrl: "wss://desktop.example.test/ws",
-              providerKind: "cloudflare_tunnel",
-            },
-            linkedAt: "2026-05-25T00:00:00.000Z",
-          },
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Relay returned credentials for a different environment.",
-      });
-    }),
-  );
-
-  it.effect("preserves relay DPoP auth failures while connecting environments", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((url: string | URL) =>
-          Promise.resolve(
-            String(url).endsWith("/v1/client/dpop-token")
-              ? Response.json(validDpopAccessTokenResponse("environment:connect"))
-              : Response.json(
-                  {
-                    _tag: "RelayAuthInvalidError",
-                    code: "auth_invalid",
-                    reason: "invalid_dpop",
-                    traceId: "trace-connect",
-                  },
-                  { status: 401 },
-                ),
-          ),
-        ),
-      );
-
-      const error = yield* withCloudServices(
-        connectCloudEnvironment({
-          clerkToken: "clerk-token",
-          environment: {
-            environmentId: EnvironmentId.make("env-1"),
-            label: "Desktop",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test/",
-              wsBaseUrl: "wss://desktop.example.test/ws",
-              providerKind: "cloudflare_tunnel",
-            },
-            linkedAt: "2026-05-25T00:00:00.000Z",
-          },
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: `https://relay.example.test/v1/environments/env-1/connect failed: Relay rejected the DPoP proof. ${DPOP_UNKNOWN_HINT}`,
-        traceId: "trace-connect",
-      });
-    }),
-  );
-
-  it.effect(
-    "presents clock skew as one possible cause when an older environment rejects DPoP",
-    () =>
-      Effect.gen(function* () {
-        vi.stubGlobal(
-          "fetch",
-          vi.fn((url: string | URL) => {
-            const value = String(url);
-            if (value.endsWith("/v1/client/dpop-token")) {
-              return Promise.resolve(
-                Response.json(validDpopAccessTokenResponse("environment:connect")),
-              );
-            }
-            if (value.endsWith("/v1/environments/env-1/connect")) {
-              return Promise.resolve(
-                Response.json({
-                  environmentId: "env-1",
-                  endpoint: {
-                    httpBaseUrl: "https://desktop.example.test/",
-                    wsBaseUrl: "wss://desktop.example.test/ws",
-                    providerKind: "cloudflare_tunnel",
-                  },
-                  credential: "one-time-cloud-credential",
-                  expiresAt: "2026-05-25T00:05:00.000Z",
-                }),
-              );
-            }
-            if (value.endsWith("/.well-known/t3/environment")) {
-              return Promise.resolve(
-                Response.json({
-                  environmentId: "env-1",
-                  label: "Desktop",
-                  platform: { os: "darwin", arch: "arm64" },
-                  serverVersion: "0.0.0-test",
-                  capabilities: { repositoryIdentity: true },
-                }),
-              );
-            }
-            return Promise.resolve(
-              Response.json(
-                {
-                  _tag: "EnvironmentAuthInvalidError",
-                  code: "auth_invalid",
-                  reason: "invalid_credential",
-                  traceId: "trace-environment",
-                },
-                { status: 401 },
-              ),
-            );
-          }),
-        );
-
-        const error = yield* withCloudServices(
-          connectCloudEnvironment({
-            clerkToken: "clerk-token",
-            environment: {
-              environmentId: EnvironmentId.make("env-1"),
-              label: "Desktop",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test/",
-                wsBaseUrl: "wss://desktop.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              linkedAt: "2026-05-25T00:00:00.000Z",
-            },
-          }),
-        ).pipe(Effect.flip);
-
-        expect(error).toMatchObject({
-          _tag: "CloudEnvironmentLinkError",
-          message: `Could not exchange a managed endpoint DPoP access token. ${DPOP_UNKNOWN_HINT}`,
-          traceId: "trace-environment",
-        });
-      }),
-  );
-
-  it.effect("rejects relay connect responses for a different endpoint", () =>
-    Effect.gen(function* () {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn((url: string | URL) =>
-          Promise.resolve(
-            String(url).endsWith("/v1/client/dpop-token")
-              ? Response.json(validDpopAccessTokenResponse("environment:connect"))
-              : Response.json({
-                  environmentId: "env-1",
-                  endpoint: {
-                    httpBaseUrl: "https://other-desktop.example.test/",
-                    wsBaseUrl: "wss://other-desktop.example.test/ws",
-                    providerKind: "cloudflare_tunnel",
-                  },
-                  credential: "one-time-cloud-credential",
-                  expiresAt: "2026-05-25T00:05:00.000Z",
-                }),
-          ),
-        ),
-      );
-
-      const error = yield* withCloudServices(
-        connectCloudEnvironment({
-          clerkToken: "clerk-token",
-          environment: {
-            environmentId: EnvironmentId.make("env-1"),
-            label: "Desktop",
-            endpoint: {
-              httpBaseUrl: "https://desktop.example.test/",
-              wsBaseUrl: "wss://desktop.example.test/ws",
-              providerKind: "cloudflare_tunnel",
-            },
-            linkedAt: "2026-05-25T00:00:00.000Z",
-          },
-        }),
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "CloudEnvironmentLinkError",
-        message: "Relay returned credentials for a different endpoint.",
-      });
-    }),
-  );
-
-  it.effect(
-    "rejects managed endpoints whose descriptor does not match the selected environment",
-    () =>
-      Effect.gen(function* () {
-        vi.stubGlobal(
-          "fetch",
-          vi.fn((url: string | URL) =>
-            Promise.resolve(
-              String(url).endsWith("/v1/client/dpop-token")
-                ? Response.json(validDpopAccessTokenResponse("environment:connect"))
-                : String(url).endsWith("/.well-known/t3/environment")
-                  ? Response.json({
-                      environmentId: "env-other",
-                      label: "Other Desktop",
-                      platform: { os: "darwin", arch: "arm64" },
-                      serverVersion: "0.0.0-test",
-                      capabilities: { repositoryIdentity: true },
-                    })
-                  : Response.json({
-                      environmentId: "env-1",
-                      endpoint: {
-                        httpBaseUrl: "https://desktop.example.test/",
-                        wsBaseUrl: "wss://desktop.example.test/ws",
-                        providerKind: "cloudflare_tunnel",
-                      },
-                      credential: "one-time-cloud-credential",
-                      expiresAt: "2026-05-25T00:05:00.000Z",
-                    }),
-            ),
-          ),
-        );
-
-        const error = yield* withCloudServices(
-          connectCloudEnvironment({
-            clerkToken: "clerk-token",
-            environment: {
-              environmentId: EnvironmentId.make("env-1"),
-              label: "Desktop",
-              endpoint: {
-                httpBaseUrl: "https://desktop.example.test/",
-                wsBaseUrl: "wss://desktop.example.test/ws",
-                providerKind: "cloudflare_tunnel",
-              },
-              linkedAt: "2026-05-25T00:00:00.000Z",
-            },
-          }),
-        ).pipe(Effect.flip);
-        expect(error).toMatchObject({
-          _tag: "CloudEnvironmentLinkError",
-          message: "Connected endpoint descriptor does not match the selected environment.",
-        });
-      }),
   );
 });
