@@ -211,7 +211,11 @@ const config: ExpoConfig = {
   slug: "hotlap",
   platforms: ["ios", "android"],
   scheme: variant.scheme,
+<<<<<<< HEAD
   version: "1.0.0",
+=======
+  version: "1.2.1",
+>>>>>>> 0f1b572b9865256dd61e245b4dd09f6a7b15f0e1
   runtimeVersion: {
     // Development manifests resolve on every launch, so avoid fingerprint's
     // expensive native-project calculation there. Preview and production stay
@@ -415,6 +419,7 @@ const config: ExpoConfig = {
     "./plugins/withIosSceneLifecycle.cjs",
     "./plugins/withAndroidCleartextTraffic.cjs",
     "./plugins/withAndroidGradleHeap.cjs",
+    "./plugins/withAndroidInputBackground.cjs",
     "./plugins/withAndroidModernPopupMenu.cjs",
     "./plugins/withAndroidModernAlertDialog.cjs",
     "./plugins/withAndroidPredictiveBackCompat.cjs",

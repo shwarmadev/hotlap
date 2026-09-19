@@ -294,15 +294,62 @@ jobs:
       clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ steps.public_config.outputs.relay_url }}
     steps:
+<<<<<<< HEAD
       # Upstream fills this file from the deployed relay with
       # `deploy --read-state --github-output --github-env-file "$RUNNER_TEMP/relay-client-tracing.env"`.
       # infra/relay/scripts/deploy.test.ts checks the config still crosses jobs as
       # that file, so the empty config takes the same path.
       - id: relay_state
         name: Write empty relay tracing config
+=======
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.resolve_commit.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=t3code-relay...
+
+      # The deployed stack's outputs, read from Alchemy's state store without
+      # planning or applying. Select the backend explicitly to avoid loading
+      # the stack's unrelated provider credentials; suppress informational logs
+      # and strip the credential-refresh progress prefix before parsing JSON.
+      # Redacted values are persisted as
+      # {"__redacted__": "<value>"}; the token is masked before it is written.
+      - name: Read production relay tracing config
+>>>>>>> 0f1b572b9865256dd61e245b4dd09f6a7b15f0e1
         shell: bash
+        working-directory: infra/relay
         run: |
+<<<<<<< HEAD
           printf 'T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=\n' > "$RUNNER_TEMP/relay-client-tracing.env"
+=======
+          set -euo pipefail
+          output="$(npx alchemy state read T3CodeRelay/prod/output --backend cloudflare --log-level error --no-input | sed -n '/^{/,$p')"
+          field() {
+            jq -er --arg key "$1" '.[$key] | if type == "object" then .__redacted__ else . end | select(. != null and . != "")' <<<"$output" \
+              || { echo "Relay stack output is missing $1" >&2; exit 1; }
+          }
+          url="$(field clientTracingUrl)"
+          dataset="$(field clientTracingDataset)"
+          token="$(field clientTracingToken)"
+          echo "::add-mask::$token"
+          {
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_URL=$url"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET=$dataset"
+            echo "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=$token"
+          } > "$RUNNER_TEMP/relay-client-tracing.env"
+>>>>>>> 0f1b572b9865256dd61e245b4dd09f6a7b15f0e1
 
       - name: Upload relay client tracing config
         uses: actions/upload-artifact@v7
