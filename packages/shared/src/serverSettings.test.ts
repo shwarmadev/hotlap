@@ -24,6 +24,7 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+<<<<<<< HEAD
   it("replaces a provider routing policy atomically", () => {
     const providerRoutingPolicy = {
       defaultMode: "auto" as const,
@@ -65,6 +66,25 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(saved, { customPrompts: [] }).customPrompts).toEqual([]);
   });
 
+=======
+  it("changes a cleanup rule without replacing the machine's other rules", () => {
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },
+    });
+    expect(
+      applyServerSettingsPatch(enabled, {
+        storageCleanup: { worktreeAfterDays: null },
+      }).storageCleanup,
+    ).toEqual({
+      worktreeAfterDays: null,
+      worktreeOnMerge: true,
+      worktreeOnDelete: false,
+      worktreeUnchanged: false,
+      browserArtifactsAfterDays: null,
+      logsAfterDays: 30,
+    });
+  });
+>>>>>>> cb3d95c17487f3d834a5537f7c3aa0106bc9b5ec
   it("replaces SSH host lists when saving, editing, and removing hosts", () => {
     const host = { id: "mini", label: "Mac mini", target: "mini" };
     const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { deviceHosts: [host] });
@@ -248,14 +268,18 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{}")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
     expect(
       parsePersistedServerObservabilitySettings(
-        JSON.stringify({ observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "" } }),
+        JSON.stringify({
+          observability: { otlpTracesUrl: "   ", otlpMetricsUrl: "", otlpLogsUrl: "   " },
+        }),
       ),
     ).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
@@ -266,12 +290,14 @@ describe("serverSettings helpers", () => {
           observability: {
             otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
             otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
+            otlpLogsUrl: "  http://localhost:4318/v1/logs  ",
           },
         }),
       ),
     ).toEqual({
       otlpTracesUrl: "http://localhost:4318/v1/traces",
       otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      otlpLogsUrl: "http://localhost:4318/v1/logs",
     });
   });
 
@@ -279,6 +305,7 @@ describe("serverSettings helpers", () => {
     expect(parsePersistedServerObservabilitySettings("{")).toEqual({
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
+      otlpLogsUrl: undefined,
     });
   });
 
