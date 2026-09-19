@@ -7,9 +7,7 @@ import * as Struct from "effect/Struct";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
-  DeleteProjectionThreadInput,
   GetProjectionThreadInput,
-  ListProjectionThreadsByProjectInput,
   ProjectionThread,
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
@@ -24,7 +22,6 @@ const ProjectionThreadDbRow = ProjectionThread.mapFields(
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
   }),
 );
-type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
 
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -184,6 +181,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+<<<<<<< HEAD
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
     Result: ProjectionThreadDbRow,
@@ -238,6 +236,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       `,
   });
 
+=======
+>>>>>>> 803f94e787faef498edecba5dbd07493ac8bc817
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.upsert:query")),
@@ -248,21 +248,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
       Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
     );
 
-  const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
-    listProjectionThreadRows(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
-    );
-
-  const deleteById: ProjectionThreadRepositoryShape["deleteById"] = (input) =>
-    deleteProjectionThreadRow(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.deleteById:query")),
-    );
-
   return {
     upsert,
     getById,
-    listByProjectId,
-    deleteById,
   } satisfies ProjectionThreadRepositoryShape;
 });
 
