@@ -724,6 +724,11 @@ export function useThreadOutboxDrain(): void {
             commandId: settingsCommandId(queuedMessage, "model-selection"),
             threadId: queuedMessage.threadId,
             ...metadataUpdate,
+            // A switch made while this waited in the outbox wins over it.
+            ...(metadataUpdate.modelSelection !== undefined &&
+            queuedMessage.expectedModelSelection !== undefined
+              ? { expectedModelSelection: queuedMessage.expectedModelSelection }
+              : {}),
           },
         });
         if (AsyncResult.isFailure(updateResult)) {
@@ -834,6 +839,11 @@ export function useThreadOutboxDrain(): void {
             attachments: prepared.attachments,
           },
           modelSelection: sendSettings.modelSelection,
+          // Asserts the selection just persisted above; if a switch landed in
+          // between, the server runs this turn on the switch instead.
+          ...(queuedMessage.expectedModelSelection !== undefined
+            ? { expectedModelSelection: sendSettings.modelSelection }
+            : {}),
           runtimeMode: sendSettings.runtimeMode,
           interactionMode: sendSettings.interactionMode,
           ...(shouldAllowQueuedProviderAccountRouting(

@@ -5182,7 +5182,15 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    await harness.admitTurn();
+    // Wait for the reactor's own admission rather than racing admitTurn(): its
+    // hard-coded approval-required mode, landing after the admission, made the
+    // switch below a no-op and this test fail about half the time.
+    await waitFor(async () => {
+      const session = (await harness.readModel()).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      )?.session;
+      return session?.status === "running" && session.runtimeMode === "full-access";
+    });
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -6476,4 +6484,638 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.session?.status).toBe("ready");
     }),
   );
+
+  // The incident: a queued turn start was still inside its (slow) session start
+  // when pending-turn reconciliation found it unclaimed, replayed it, and
+  // restarted the session underneath it. The command's createdAt is the
+  // client's queue time, so reconciliation treats it as stuck at once.
+  it("does not let reconciliation replay a turn start that is still starting its session", async () => {
+    const threadId = ThreadId.make("thread-1");
+    // Assigned before the first start can run: nothing starts until the dispatch below.
+    let firstStartGate: Deferred.Deferred<void> | undefined;
+    let startCalls = 0;
+    const harness = await createHarness({
+      startSessionEffect: (session) => {
+        startCalls += 1;
+        return startCalls === 1 && firstStartGate !== undefined
+          ? Deferred.await(firstStartGate).pipe(Effect.as(session))
+          : Effect.succeed(session);
+      },
+    });
+    firstStartGate = await harness.runEffect(Deferred.make<void>());
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-queued-turn-start"),
+        threadId,
+        message: {
+          messageId: asMessageId("message-queued-while-switching"),
+          role: "user",
+          text: "continue on the personal account",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    // Runs to completion while the first start is still parked.
+    await harness.runEffect(harness.reactor.reconcilePendingTurns(threadId));
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    await harness.runEffect(Deferred.succeed(firstStartGate, undefined));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.drain();
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("defers a session restart until the provider's running turn ends", async () => {
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness();
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-running"),
+        threadId,
+        message: {
+          messageId: asMessageId("message-running"),
+          role: "user",
+          text: "long task",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const running = harness.runtimeSessions.find((session) => session.threadId === threadId);
+    expect(running).toBeDefined();
+    harness.runtimeSessions.splice(harness.runtimeSessions.indexOf(running!), 1, {
+      ...running!,
+      status: "running",
+      activeTurnId: asTurnId("turn-1"),
+    });
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-turn-running-admitted"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-1"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    // A runtime-mode change needs a restart; mid-turn it must wait.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: CommandId.make("cmd-runtime-mode-mid-turn"),
+        threadId,
+        runtimeMode: "full-access",
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(harness.stopSession).not.toHaveBeenCalled();
+  });
+  it("classifies a turn-start failure afresh instead of keeping the previous turn's reason", async () => {
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-09-21T01:40:00.000Z";
+    const harness = await createHarness({
+      startSessionEffect: () =>
+        Effect.fail(
+          new ProviderAdapterRequestError({
+            provider: "codex",
+            method: "thread/start",
+            detail: "401 Unauthorized: please log in to Codex again.",
+          }),
+        ),
+    });
+    const usageLimit = {
+      kind: "usage_limit" as const,
+      message: "Codex usage limit reached.",
+      resetsAt: "2026-09-21T01:42:00.000Z",
+    };
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-previous-usage-limit"),
+        threadId,
+        session: {
+          threadId,
+          status: "error",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: usageLimit.message,
+          lastErrorReason: usageLimit,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-after-limit"),
+        threadId,
+        message: {
+          messageId: asMessageId("message-after-limit"),
+          role: "user",
+          text: "try again",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const session = (await harness.readModel()).threads[0]?.session;
+      return session?.lastError === "401 Unauthorized: please log in to Codex again.";
+    });
+    const session = (await harness.readModel()).threads[0]?.session;
+    expect(session?.lastErrorReason).toMatchObject({
+      kind: "auth",
+      message: "401 Unauthorized: please log in to Codex again.",
+    });
+  });
+
+  it("holds a turn that needs another account until the running turn ends, then runs it there", async () => {
+    const threadId = ThreadId.make("thread-1");
+    const now = "2026-01-01T00:00:00.000Z";
+    const personal = {
+      instanceId: ProviderInstanceId.make("codex_personal"),
+      model: "gpt-5-codex",
+    };
+    const harness = await createHarness();
+    const turnStart = (id: string, text: string, modelSelection?: ModelSelection) =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make(`cmd-${id}`),
+          threadId,
+          message: { messageId: asMessageId(`message-${id}`), role: "user", text, attachments: [] },
+          ...(modelSelection ? { modelSelection, expectedModelSelection: modelSelection } : {}),
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+    const setProviderTurn = (activeTurnId: TurnId | undefined) => {
+      const index = harness.runtimeSessions.findIndex((entry) => entry.threadId === threadId);
+      const { activeTurnId: _previous, ...session } = harness.runtimeSessions[index]!;
+      harness.runtimeSessions.splice(index, 1, {
+        ...session,
+        status: activeTurnId ? "running" : "ready",
+        ...(activeTurnId ? { activeTurnId } : {}),
+      });
+    };
+    const threadSession = (status: "running" | "ready") =>
+      harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`cmd-first-turn-${status}`),
+          threadId,
+          session: {
+            threadId,
+            status,
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: status === "running" ? asTurnId("turn-1") : null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        }),
+      );
+
+    await turnStart("first", "long task");
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    setProviderTurn(asTurnId("turn-1"));
+    await threadSession("running");
+
+    // The user switches account and sends while the first turn still runs.
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-switch-to-personal"),
+        threadId,
+        modelSelection: personal,
+      }),
+    );
+    await turnStart("second", "continue on personal", personal);
+    await harness.drain();
+    expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    const kinds = (await harness.readModel()).threads[0]?.activities.map((a) => a.kind) ?? [];
+    expect(kinds).not.toContain("provider.turn.start.failed");
+
+    // The first turn ends; the held turn now runs on the account it asked for.
+    setProviderTurn(undefined);
+    await threadSession("ready");
+    await harness.runEffect(harness.reactor.reconcilePendingTurns(threadId));
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+      providerInstanceId: personal.instanceId,
+    });
+    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({ input: "continue on personal" });
+  });
+
+  describe("resume fallback", () => {
+    const personal = ProviderInstanceId.make("claude-personal");
+    const work = ProviderInstanceId.make("claude-work");
+
+    /** Runs and settles one turn so the thread has history and a live session. */
+    async function withSettledFirstTurn(
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      bound: { readonly providerName: string; readonly providerInstanceId: ProviderInstanceId },
+    ) {
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-09-21T01:30:00.000Z";
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-first-turn"),
+          threadId,
+          message: {
+            messageId: asMessageId("message-first"),
+            role: "user",
+            text: "first question about the orchard",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const session = (status: "running" | "ready") => ({
+        threadId,
+        status,
+        ...bound,
+        runtimeMode: "approval-required" as const,
+        activeTurnId: status === "running" ? asTurnId("turn-1") : null,
+        lastError: null,
+        updatedAt: now,
+      });
+      for (const status of ["running", "ready"] as const) {
+        await harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(`cmd-first-turn-${status}`),
+            threadId,
+            session: session(status),
+            createdAt: now,
+          }),
+        );
+      }
+    }
+
+    const secondTurn = (modelSelection: ModelSelection) =>
+      ({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-second-turn"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("message-second"),
+          role: "user",
+          text: "second question",
+          attachments: [],
+        },
+        modelSelection,
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-09-21T01:44:21.000Z",
+      }) as const;
+
+    const carriedOverInput = (harness: Awaited<ReturnType<typeof createHarness>>) =>
+      String((harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined)?.input);
+
+    async function activityKinds(harness: Awaited<ReturnType<typeof createHarness>>) {
+      const thread = (await harness.readModel()).threads[0];
+      return thread?.activities.map((activity) => activity.kind) ?? [];
+    }
+
+    it("starts fresh with the conversation when the new account cannot resume the old one", async () => {
+      const harness = await createHarness({
+        threadModelSelection: { instanceId: personal, model: "claude-sonnet-5" },
+      });
+      await withSettledFirstTurn(harness, {
+        providerName: "claudeAgent",
+        providerInstanceId: personal,
+      });
+
+      await harness.runEffect(
+        harness.engine.dispatch(secondTurn({ instanceId: work, model: "claude-sonnet-5" })),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+      const restart = harness.startSession.mock.calls[1];
+      expect(restart?.[1]).toMatchObject({ providerInstanceId: work });
+      expect(restart?.[1]).not.toHaveProperty("resumeCursor");
+      // The mock is typed with two parameters; the start options ride third.
+      expect((restart as ReadonlyArray<unknown> | undefined)?.[2]).toEqual({
+        allowIncompatibleUnstartedReplacement: true,
+      });
+      expect(carriedOverInput(harness)).toContain(
+        "This conversation moved to a new provider session",
+      );
+      expect(carriedOverInput(harness)).toContain("first question about the orchard");
+      expect(carriedOverInput(harness)).toMatch(/second question$/);
+      const kinds = await activityKinds(harness);
+      expect(kinds).toContain("provider.session.carried-over");
+      expect(kinds).not.toContain("provider.turn.start.failed");
+    });
+
+    it("carries the conversation over when the provider quietly declines a resume", async () => {
+      let starts = 0;
+      const harness = await createHarness({
+        startSessionEffect: (session) =>
+          Effect.succeed(
+            (starts += 1) === 2 ? { ...session, resumeDeclined: true as const } : session,
+          ),
+      });
+      await withSettledFirstTurn(harness, {
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+
+      await harness.runEffect(
+        harness.engine.dispatch(
+          secondTurn({
+            instanceId: ProviderInstanceId.make("codex_personal"),
+            model: "gpt-5-codex",
+          }),
+        ),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+      expect(harness.startSession.mock.calls[1]?.[1]).toHaveProperty("resumeCursor");
+      expect(carriedOverInput(harness)).toContain("first question about the orchard");
+      expect(await activityKinds(harness)).toContain("provider.session.carried-over");
+    });
+
+    it("retries fresh when the provider rejects the resume cursor", async () => {
+      let starts = 0;
+      const harness = await createHarness({
+        startSessionEffect: (session) =>
+          (starts += 1) === 2
+            ? Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread/resume",
+                  detail: "no rollout found for thread id 019fdf74-aaa9-7950-b252-7cc7a8650470",
+                }),
+              )
+            : Effect.succeed(session),
+      });
+      await withSettledFirstTurn(harness, {
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+
+      await harness.runEffect(
+        harness.engine.dispatch(
+          secondTurn({
+            instanceId: ProviderInstanceId.make("codex_personal"),
+            model: "gpt-5-codex",
+          }),
+        ),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+      expect(harness.startSession).toHaveBeenCalledTimes(3);
+      expect(harness.startSession.mock.calls[1]?.[1]).toHaveProperty("resumeCursor");
+      expect(harness.startSession.mock.calls[2]?.[1]).not.toHaveProperty("resumeCursor");
+      expect(carriedOverInput(harness)).toContain("first question about the orchard");
+      expect(await activityKinds(harness)).toContain("provider.session.carried-over");
+    });
+
+    // A restart between the carry-over and the next send empties the reactor's
+    // memory. The state is written before the reactor starts, as after a
+    // restart, so only the persisted notice can bring the conversation along.
+    it.each([
+      [
+        "imports history after a restart while the carried-over turn is still the latest",
+        "turn-1",
+        true,
+      ],
+      ["does not import again once a turn has run since the carry-over", "turn-0", false],
+    ] as const)("%s", async (_name, afterTurnId, imports) => {
+      const threadId = ThreadId.make("thread-1");
+      const now = "2026-09-21T01:30:00.000Z";
+      const harness = await createHarness({ deferReactorStart: true });
+      const run = (command: Parameters<typeof harness.engine.dispatch>[0]) =>
+        harness.runEffect(harness.engine.dispatch(command));
+      {
+        await run({
+          type: "thread.message.user.append",
+          commandId: CommandId.make("cmd-history-message"),
+          threadId,
+          message: {
+            messageId: asMessageId("message-history"),
+            text: "first question about the orchard",
+            attachments: [],
+          },
+          createdAt: now,
+        });
+        for (const status of ["running", "ready"] as const) {
+          await run({
+            type: "thread.session.set",
+            commandId: CommandId.make(`cmd-history-turn-${status}`),
+            threadId,
+            session: {
+              threadId,
+              status,
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "approval-required",
+              activeTurnId: status === "running" ? asTurnId("turn-1") : null,
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
+        await run({
+          type: "thread.activity.append",
+          commandId: CommandId.make("cmd-carried-over-before-restart"),
+          threadId,
+          activity: {
+            id: EventId.make("activity-carried-over"),
+            tone: "info",
+            kind: "provider.session.carried-over",
+            summary: "Continued in a new codex session",
+            payload: {
+              threadId,
+              providerInstanceId: "codex",
+              reason: "resume-declined",
+              afterTurnId,
+            },
+            turnId: null,
+            createdAt: now,
+          },
+          createdAt: now,
+        });
+      }
+      await harness.startReactor();
+
+      await harness.runEffect(
+        harness.engine.dispatch(
+          secondTurn({ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" }),
+        ),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      const input = String(
+        (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      );
+      expect(input.includes("first question about the orchard")).toBe(imports);
+    });
+
+    // The server died after the provider admitted the carried-over turn: the
+    // restored marker must clear when reconciliation finds that admission.
+    it("does not import again after a restart once the carried-over turn was admitted", async () => {
+      const threadId = ThreadId.make("thread-1");
+      const admittedMessageId = MessageId.make("message-carried-and-admitted");
+      const then = "2025-12-31T23:59:00.000Z";
+      const harness = await createHarness({ deferReactorStart: true });
+      const run = (command: Parameters<typeof harness.engine.dispatch>[0]) =>
+        harness.runEffect(harness.engine.dispatch(command));
+      await run({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-carried-and-admitted"),
+        threadId,
+        message: {
+          messageId: admittedMessageId,
+          role: "user",
+          text: "first question about the orchard",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: then,
+      });
+      await run({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-carried-and-admitted-starting"),
+        threadId,
+        session: {
+          threadId,
+          status: "starting",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: then,
+        },
+        createdAt: then,
+      });
+      await run({
+        type: "thread.activity.append",
+        commandId: CommandId.make("cmd-carried-and-admitted-notice"),
+        threadId,
+        activity: {
+          id: EventId.make("activity-carried-and-admitted"),
+          tone: "info",
+          kind: "provider.session.carried-over",
+          summary: "Continued in a new codex session",
+          payload: {
+            threadId,
+            providerInstanceId: "codex",
+            reason: "resume-declined",
+            afterTurnId: null,
+          },
+          turnId: null,
+          createdAt: then,
+        },
+        createdAt: then,
+      });
+      await harness.runEffect(
+        harness.directory.upsert({
+          threadId,
+          provider: ProviderDriverKind.make("codex"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          status: "running",
+          runtimePayload: {
+            activeTurnId: null,
+            lastAdmittedMessageId: admittedMessageId,
+            lastAdmittedTurnId: TurnId.make("turn-carried-and-admitted"),
+          },
+        }),
+      );
+      await harness.startReactor();
+      await harness.runEffect(harness.reactor.reconcilePendingTurns(threadId));
+      await harness.drain();
+
+      await harness.runEffect(
+        harness.engine.dispatch(
+          secondTurn({ instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" }),
+        ),
+      );
+      await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+      expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({ input: "second question" });
+    });
+
+    it("does not abandon a resumable session over a failure that is not a resume", async () => {
+      let starts = 0;
+      const harness = await createHarness({
+        startSessionEffect: (session) =>
+          (starts += 1) === 2
+            ? Effect.fail(
+                new ProviderAdapterRequestError({
+                  provider: "codex",
+                  method: "thread/resume",
+                  detail:
+                    "Codex usage limit reached. Send the message again once the limit resets.",
+                }),
+              )
+            : Effect.succeed(session),
+      });
+      await withSettledFirstTurn(harness, {
+        providerName: "codex",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+
+      await harness.runEffect(
+        harness.engine.dispatch(
+          secondTurn({
+            instanceId: ProviderInstanceId.make("codex_personal"),
+            model: "gpt-5-codex",
+          }),
+        ),
+      );
+      await waitFor(async () =>
+        (await activityKinds(harness)).includes("provider.turn.start.failed"),
+      );
+
+      expect(harness.startSession).toHaveBeenCalledTimes(2);
+      expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+      expect(await activityKinds(harness)).not.toContain("provider.session.carried-over");
+    });
+  });
 });

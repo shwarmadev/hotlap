@@ -12,10 +12,12 @@ import {
   OrchestrationSessionStatus,
   ProviderInstanceId,
   ThreadId,
+  TurnFailureReason,
   TurnId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 
@@ -30,9 +32,20 @@ export const ProjectionThreadSession = Schema.Struct({
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
+  lastErrorReason: Schema.NullOr(TurnFailureReason),
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadSession = typeof ProjectionThreadSession.Type;
+
+/**
+ * The row as SQLite holds it: `last_error_reason_json` is a JSON blob, so every
+ * read path decodes through this rather than the struct above.
+ */
+export const ProjectionThreadSessionDbRow = ProjectionThreadSession.mapFields(
+  Struct.assign({
+    lastErrorReason: Schema.NullOr(Schema.fromJsonString(TurnFailureReason)),
+  }),
+);
 
 export const GetProjectionThreadSessionInput = Schema.Struct({
   threadId: ThreadId,

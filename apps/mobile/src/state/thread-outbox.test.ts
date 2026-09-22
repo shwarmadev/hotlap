@@ -376,6 +376,19 @@ describe("thread outbox", () => {
     ).toThrow();
   });
 
+  it("keeps a queued message's selection basis across a restart", () => {
+    // The basis is what lets a switch made while the message waited win over
+    // it; losing it on disk would silently bring back the stale write.
+    const message = {
+      ...queuedMessage({ messageId: "message-basis", createdAt: "2026-09-21T01:40:00.000Z" }),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      expectedModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    };
+    expect(
+      decodeQueuedThreadMessage(JSON.parse(JSON.stringify(encodeQueuedThreadMessage(message)))),
+    ).toEqual(message);
+  });
+
   it("persists generic attachment paths without embedding their contents", () => {
     const message = {
       ...queuedMessage({

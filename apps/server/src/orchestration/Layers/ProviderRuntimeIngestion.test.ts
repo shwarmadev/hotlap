@@ -5276,6 +5276,132 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
   });
+
+  it("puts the adapter's typed failure on the errored turn, and clears it when the next turn runs", async () => {
+    const harness = await createHarness();
+    const codex = ProviderInstanceId.make("codex");
+    const usageLimit = {
+      kind: "usage_limit" as const,
+      message: "Codex usage limit reached. The weekly limit resets in 32m.",
+      resetsAt: "2026-09-21T01:42:00.000Z",
+    };
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-limited-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: codex,
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:09:00.000Z",
+      turnId: asTurnId("turn-limited"),
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-limited-turn-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: codex,
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:10:00.000Z",
+      turnId: asTurnId("turn-limited"),
+      payload: { state: "failed", errorMessage: usageLimit.message, errorReason: usageLimit },
+    });
+
+    const failed = await waitForThread(
+      harness.readModel,
+      (thread) => thread.latestTurn?.state === "error",
+    );
+    const expected = { ...usageLimit, providerInstanceId: codex };
+    expect(failed.latestTurn?.error).toEqual(expected);
+    // The persisted read model clients load must say the same thing.
+    const shell = await harness.readThreadShell();
+    expect(shell.latestTurn?.state).toBe("error");
+    expect(shell.latestTurn?.error).toEqual(expected);
+    expect(shell.session?.lastErrorReason).toEqual(expected);
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-retry-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: codex,
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:43:00.000Z",
+      turnId: asTurnId("turn-retry"),
+    });
+    const retrying = await waitForThread(
+      harness.readModel,
+      (thread) => thread.latestTurn?.turnId === "turn-retry",
+    );
+    expect(retrying.latestTurn?.error ?? null).toBeNull();
+    expect((await harness.readThreadShell()).latestTurn?.error ?? null).toBeNull();
+  });
+
+  it.each([
+    ["fails the running turn as a provider crash when the provider dies under it", true],
+    ["only ends the session when the provider exits while idle", false],
+  ] as const)("%s", async (_name, midTurn) => {
+    const harness = await createHarness();
+    if (midTurn) {
+      harness.emit({
+        type: "turn.started",
+        eventId: asEventId("evt-crash-mid-turn-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-09-21T01:00:00.000Z",
+        turnId: asTurnId("turn-mid"),
+      });
+      await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+    }
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-provider-exited"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:00:05.000Z",
+      payload: { reason: "Codex App Server exited with code 1.", exitKind: "error" },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      midTurn ? entry.latestTurn?.state === "error" : entry.session?.status === "stopped",
+    );
+    if (midTurn) {
+      expect((await harness.readThreadShell()).latestTurn?.error).toMatchObject({
+        kind: "provider_crash",
+        message: "Codex App Server exited with code 1.",
+      });
+    } else {
+      expect(thread.session?.status).toBe("stopped");
+      expect(thread.latestTurn?.error ?? null).toBeNull();
+    }
+  });
+
+  it("classifies a failed turn that only carried a sentence, so it is never reasonless", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-crash-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:00:00.000Z",
+      turnId: asTurnId("turn-crash"),
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-crash-turn-failed"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-09-21T01:00:05.000Z",
+      turnId: asTurnId("turn-crash"),
+      payload: { state: "failed", errorMessage: "Codex exited before the turn completed." },
+    });
+
+    await waitForThread(harness.readModel, (thread) => thread.latestTurn?.state === "error");
+    expect((await harness.readThreadShell()).latestTurn?.error).toMatchObject({
+      kind: "provider_crash",
+      message: "Codex exited before the turn completed.",
+    });
+  });
 });
 
 describe("splitBufferedAssistantText", () => {

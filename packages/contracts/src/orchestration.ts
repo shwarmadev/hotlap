@@ -24,6 +24,7 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { TurnFailureReason } from "./turnFailure.ts";
 import {
   PullRequestActor,
   PullRequestChecksState,
@@ -637,6 +638,9 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  /** Typed companion to `lastError`. Optional: events persisted before it
+      replay without one, and a client that has not shipped support ignores it. */
+  lastErrorReason: Schema.optional(Schema.NullOr(TurnFailureReason)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -699,6 +703,9 @@ export const OrchestrationLatestTurn = Schema.Struct({
   completedAt: Schema.NullOr(IsoDateTime),
   assistantMessageId: Schema.NullOr(MessageId),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  /** Why the turn ended in `error`. A turn that failed always has one; every
+      other state has none. Optional so historical payloads still decode. */
+  error: Schema.optional(Schema.NullOr(TurnFailureReason)),
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
@@ -1278,6 +1285,13 @@ const ThreadMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   regenerateTitle: Schema.optional(Schema.Literal(true)),
   modelSelection: Schema.optional(ModelSelection),
+  /**
+   * Compare-and-set basis for `modelSelection`: the thread selection the sender
+   * saw when it built this command. When the thread has been switched since,
+   * the switch wins and this command's selection is dropped (a turn still
+   * runs, on the thread's selection). Absent means an unconditional write.
+   */
+  expectedModelSelection: Schema.optional(ModelSelection),
   providerRoutingMode: Schema.optional(ProviderRoutingMode),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1363,6 +1377,13 @@ export const ThreadTurnStartCommand = Schema.Struct({
     context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  /**
+   * Compare-and-set basis for `modelSelection`: the thread selection the sender
+   * saw when it built this command. When the thread has been switched since,
+   * the switch wins and this command's selection is dropped (a turn still
+   * runs, on the thread's selection). Absent means an unconditional write.
+   */
+  expectedModelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
@@ -1386,6 +1407,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
     context: Schema.optional(OrchestrationMessageContext),
   }),
   modelSelection: Schema.optional(ModelSelection),
+  expectedModelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,

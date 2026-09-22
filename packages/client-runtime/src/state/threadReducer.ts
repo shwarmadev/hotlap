@@ -14,7 +14,11 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
-import { isReadOnlyHistoryMessageId } from "@t3tools/contracts";
+import {
+  isReadOnlyHistoryMessageId,
+  turnFailureReasonForSession,
+  turnFailureReasonsEqual,
+} from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 
 export type ThreadDetailReducerResult =
@@ -502,6 +506,7 @@ export function applyThreadDetailEvent(
                 thread.latestTurn?.turnId === event.payload.session.activeTurnId
                   ? thread.latestTurn.assistantMessageId
                   : null,
+              error: null,
             }
           : thread.latestTurn !== null &&
               thread.latestTurn.state === "running" &&
@@ -513,6 +518,10 @@ export function applyThreadDetailEvent(
                 // placeholder checkpoint timestamp — the session leaving
                 // "running" is the authoritative turn end.
                 completedAt: event.payload.session.updatedAt,
+                error:
+                  settledTurnState === "error"
+                    ? turnFailureReasonForSession(event.payload.session)
+                    : null,
               }
             : thread.latestTurn,
       );
@@ -592,19 +601,21 @@ export function applyThreadDetailEvent(
       const diffTurnStillRunning =
         thread.session?.status === "running" &&
         thread.session.activeTurnId === event.payload.turnId;
+      const diffTurnState =
+        thread.latestTurn?.state === "interrupted"
+          ? ("interrupted" as const)
+          : checkpointStatusToTurnState(event.payload.status);
       const latestTurn =
         !diffTurnStillRunning &&
         (thread.latestTurn === null || thread.latestTurn.turnId === event.payload.turnId)
           ? {
               turnId: event.payload.turnId,
-              state:
-                thread.latestTurn?.state === "interrupted"
-                  ? "interrupted"
-                  : checkpointStatusToTurnState(event.payload.status),
+              state: diffTurnState,
               requestedAt: thread.latestTurn?.requestedAt ?? event.payload.completedAt,
               startedAt: thread.latestTurn?.startedAt ?? event.payload.completedAt,
               completedAt: event.payload.completedAt,
               assistantMessageId: event.payload.assistantMessageId,
+              error: diffTurnState === "error" ? turnFailureReasonForSession(thread.session) : null,
             }
           : thread.latestTurn;
 
@@ -795,7 +806,8 @@ function reuseLatestTurn(
     previous.completedAt === next.completedAt &&
     previous.assistantMessageId === next.assistantMessageId &&
     previous.sourceProposedPlan?.threadId === next.sourceProposedPlan?.threadId &&
-    previous.sourceProposedPlan?.planId === next.sourceProposedPlan?.planId
+    previous.sourceProposedPlan?.planId === next.sourceProposedPlan?.planId &&
+    turnFailureReasonsEqual(previous.error, next.error)
     ? previous
     : next;
 }

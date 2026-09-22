@@ -202,8 +202,11 @@ export function buildForkProviderInput(input: {
   readonly messages: ReadonlyArray<ReadableThreadMessage>;
   readonly continuation: string;
   readonly maxChars: number;
+  /** Opening paragraph; defaults to the fork handoff's. */
+  readonly intro?: string;
 }): { readonly text: string; readonly omittedMessageCount: number } | null {
   const intro =
+    input.intro ??
     "This conversation was forked. Continue from the inherited transcript below, which may omit older messages, using the newest workspace state.\n\n";
   const continuation = `\n\n## New user message\n\n${input.continuation}`;
   const omission = "[Older inherited messages omitted to fit the provider context.]\n\n";

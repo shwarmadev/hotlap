@@ -49,6 +49,7 @@ import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReape
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import { resolveTurnFailureReason } from "./provider/turnFailureReason.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -697,6 +698,13 @@ export const reconcileProviderSessions = Effect.gen(function* () {
               status: "error",
               activeTurnId: null,
               lastError,
+              lastErrorReason:
+                resolveTurnFailureReason({
+                  message: lastError,
+                  ...(session.providerInstanceId !== undefined
+                    ? { providerInstanceId: session.providerInstanceId }
+                    : {}),
+                }) ?? null,
               updatedAt: reconciledAt,
             },
             createdAt: reconciledAt,

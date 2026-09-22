@@ -1839,6 +1839,32 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       NodeAssert.equal(firstEvent.value.threadId, "thread-1");
       NodeAssert.equal(firstEvent.value.payload.reason, "Session stopped");
+      NodeAssert.equal(firstEvent.value.payload.exitKind, "graceful");
+    }),
+  );
+
+  // The runtime only emits session/exited when the process ended without T3
+  // closing it, so ingestion must see a crash, not a clean stop.
+  it.effect("maps an unrequested session/exited to an error exit", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-session-exited"),
+        kind: "session",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "session/exited",
+        message: "Codex App Server exited with code 1.",
+      });
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+
+      NodeAssert.equal(firstEvent._tag === "Some" && firstEvent.value.type, "session.exited");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "session.exited") return;
+      NodeAssert.equal(firstEvent.value.payload.exitKind, "error");
+      NodeAssert.equal(firstEvent.value.payload.reason, "Codex App Server exited with code 1.");
     }),
   );
 

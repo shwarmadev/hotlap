@@ -5,6 +5,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import Migration0001 from "./HotlapMigrations/001_ProjectionThreadForks.ts";
 import Migration0002 from "./HotlapMigrations/002_ProjectionThreadProviderRoutingMode.ts";
+import Migration0003 from "./HotlapMigrations/003_ProjectionThreadSessionLastErrorReason.ts";
 
 type MigrationManifest = ReadonlyArray<readonly [id: number, name: string]>;
 type MigrationRow = {
@@ -19,6 +20,7 @@ const LEGACY_FORK_MIGRATION = [52, "ProjectionThreadForks"] as const;
 const hotlapMigrationEntries = [
   [1, "ProjectionThreadForks", Migration0001],
   [2, "ProjectionThreadProviderRoutingMode", Migration0002],
+  [3, "ProjectionThreadSessionLastErrorReason", Migration0003],
 ] as const;
 const hotlapMigrationManifest = hotlapMigrationEntries.map(([id, name]) => [id, name] as const);
 

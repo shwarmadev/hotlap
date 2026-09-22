@@ -7,6 +7,7 @@ import {
   codexRateLimitsToUpdate,
   codexResetCreditsToContract,
   codexUsageLimitMessage,
+  codexUsageLimitReason,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -295,5 +296,36 @@ describe("mergeCodexRateLimits", () => {
         primary: { usedPercent: 3, resetsAt: 1_800_000_000, windowDurationMins: 300 },
       }),
     ).toBe(main);
+  });
+});
+
+describe("codexUsageLimitReason", () => {
+  const at = "2026-09-21T01:10:00.000Z";
+  const atSeconds = Date.parse(at) / 1000;
+
+  it("carries the exhausted window's reset instant as data, not just prose", () => {
+    const resetsAtSeconds = atSeconds + 32 * 60;
+    expect(
+      codexUsageLimitReason(
+        {
+          limitId: "codex",
+          primary: { usedPercent: 30, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
+          secondary: { usedPercent: 100, resetsAt: resetsAtSeconds, windowDurationMins: 10_080 },
+        },
+        at,
+      ),
+    ).toEqual({
+      kind: "usage_limit",
+      message:
+        "Codex usage limit reached. The weekly limit resets in 32m. Send the message again once the limit resets.",
+      resetsAt: "2026-09-21T01:42:00.000Z",
+    });
+  });
+
+  it("stays a usage limit without inventing a reset when none is reported", () => {
+    expect(codexUsageLimitReason(undefined, at)).toEqual({
+      kind: "usage_limit",
+      message: codexUsageLimitMessage(undefined, at),
+    });
   });
 });

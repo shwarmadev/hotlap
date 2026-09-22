@@ -47,6 +47,12 @@ export const ProviderSession = Schema.Struct({
   model: Schema.optional(TrimmedNonEmptyString),
   threadId: ThreadId,
   resumeCursor: Schema.optional(Schema.Unknown),
+  /**
+   * Set on a started session when the provider refused the requested resume
+   * cursor and opened a fresh native session instead, so the conversation is
+   * not in the provider's context. Orchestration carries it over.
+   */
+  resumeDeclined: Schema.optional(Schema.Literal(true)),
   activeTurnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

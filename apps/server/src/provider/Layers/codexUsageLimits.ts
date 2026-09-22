@@ -11,6 +11,7 @@ import type {
   ServerProviderResetCredits,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
+  TurnFailureReason,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -219,16 +220,34 @@ export function codexUsageLimitMessage(
   snapshot: CodexRateLimitSnapshot | undefined,
   atIso: string,
 ): string {
+  return codexUsageLimitReason(snapshot, atIso).message;
+}
+
+/**
+ * The typed form of {@link codexUsageLimitMessage}: the same sentence, plus the
+ * reset instant as data so a client can show a real time (and count down to
+ * it) instead of a duration that was only true when the turn stopped.
+ */
+export function codexUsageLimitReason(
+  snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
+): TurnFailureReason & { readonly kind: "usage_limit" } {
   const atMs = Date.parse(atIso);
   const windows = snapshot && Number.isFinite(atMs) ? codexRateLimitsToWindows(snapshot) : [];
   let reset = "";
+  let resetsAt: string | undefined;
   let latestResetMs = Number.NEGATIVE_INFINITY;
   for (const window of windows) {
     if (window.usedPercent < 100 || !window.resetsAt) continue;
     const resetMs = Date.parse(window.resetsAt);
     if (!Number.isFinite(resetMs) || resetMs <= atMs || resetMs <= latestResetMs) continue;
     latestResetMs = resetMs;
+    resetsAt = window.resetsAt;
     reset = ` The ${window.kind} limit resets in ${formatCodexUsageLimitWait(resetMs - atMs)}.`;
   }
-  return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
+  return {
+    kind: "usage_limit",
+    message: `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`,
+    ...(resetsAt !== undefined ? { resetsAt } : {}),
+  };
 }

@@ -21,6 +21,7 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationLatestTurn,
+  turnFailureReasonForSession,
   type OrchestrationMessage,
   type OrchestrationProjectShell,
   type OrchestrationProposedPlan,
@@ -65,7 +66,7 @@ import { ProjectionThreadActivity } from "../../persistence/Services/ProjectionT
 import { ProjectionThreadMessage } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlan } from "../../persistence/Services/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadPullRequest } from "../../persistence/ProjectionThreadPullRequests.ts";
-import { ProjectionThreadSession } from "../../persistence/Services/ProjectionThreadSessions.ts";
+import { ProjectionThreadSessionDbRow } from "../../persistence/Services/ProjectionThreadSessions.ts";
 import { ProjectionThread } from "../../persistence/Services/ProjectionThreads.ts";
 import {
   ProjectionPendingTurnStart,
@@ -153,7 +154,7 @@ const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
 const ProjectionThreadActivityIdRowSchema = Schema.Struct({
   activityId: ProjectionThreadActivity.fields.activityId,
 });
-const ProjectionThreadSessionDbRowSchema = ProjectionThreadSession;
+const ProjectionThreadSessionDbRowSchema = ProjectionThreadSessionDbRow;
 const ProjectionThreadRuntimeContextDbRowSchema = Schema.Struct({
   titleState: Schema.NullOr(Schema.fromJsonString(ThreadTitleState)),
   id: ThreadId,
@@ -450,8 +451,26 @@ function mapSessionRow(
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
+    // Omitted when absent so a healthy session's payload is unchanged on the wire.
+    ...(row.lastErrorReason !== null ? { lastErrorReason: row.lastErrorReason } : {}),
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * A turn in `error` state renders its reason from the session that recorded the
+ * failure: the turn row keeps the state, the session row keeps the why. Every
+ * other state carries no error, so a recovered turn cannot show a stale one.
+ */
+function withLatestTurnFailure(
+  latestTurn: OrchestrationLatestTurn | null,
+  session: OrchestrationSession | null,
+): OrchestrationLatestTurn | null {
+  if (latestTurn === null) return null;
+  if (latestTurn.state !== "error") {
+    return latestTurn.error == null ? latestTurn : { ...latestTurn, error: null };
+  }
+  return { ...latestTurn, error: turnFailureReasonForSession(session) };
 }
 
 function mapProjectShellRow(
@@ -950,6 +969,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_reason_json AS "lastErrorReason",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -971,6 +991,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_reason_json AS "lastErrorReason",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -996,6 +1017,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_reason_json AS "lastErrorReason",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -1748,6 +1770,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_reason_json AS "lastErrorReason",
           sessions.updated_at AS "updatedAt"
         FROM projection_threads AS threads
         LEFT JOIN projection_thread_sessions AS sessions
@@ -2119,6 +2142,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_reason_json AS "lastErrorReason",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -2795,6 +2819,7 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  ...(row.lastErrorReason !== null ? { lastErrorReason: row.lastErrorReason } : {}),
                   updatedAt: row.updatedAt,
                 });
               }
@@ -2836,7 +2861,10 @@ pending_approval_requests AS (
                   repositoryIdentities.get(row.projectId),
                 ),
                 branchPullRequest: row.branchPullRequest,
-                latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                latestTurn: withLatestTurnFailure(
+                  latestTurnByThread.get(row.threadId) ?? null,
+                  sessionsByThread.get(row.threadId) ?? null,
+                ),
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 archivedAt: row.archivedAt,
@@ -3083,7 +3111,10 @@ pending_approval_requests AS (
                     repositoryIdentities.get(row.projectId),
                   ),
                   branchPullRequest: row.branchPullRequest,
-                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestTurn: withLatestTurnFailure(
+                    latestTurnByThread.get(row.threadId) ?? null,
+                    sessionByThread.get(row.threadId) ?? null,
+                  ),
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -3241,7 +3272,10 @@ pending_approval_requests AS (
                           row.projectId,
                           repositoryIdentities.get(row.projectId),
                         ),
-                        latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                        latestTurn: withLatestTurnFailure(
+                          latestTurnByThread.get(row.threadId) ?? null,
+                          sessionByThread.get(row.threadId) ?? null,
+                        ),
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                         archivedAt: row.archivedAt,
@@ -3406,7 +3440,10 @@ pending_approval_requests AS (
                     row.projectId,
                     repositoryIdentities.get(row.projectId),
                   ),
-                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  latestTurn: withLatestTurnFailure(
+                    latestTurnByThread.get(row.threadId) ?? null,
+                    sessionByThread.get(row.threadId) ?? null,
+                  ),
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
                   archivedAt: row.archivedAt,
@@ -3970,7 +4007,10 @@ pending_approval_requests AS (
                 ?.repositoryIdentity,
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
-        latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestTurn: withLatestTurnFailure(
+          Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+          Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        ),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -4311,7 +4351,10 @@ pending_approval_requests AS (
                 ?.repositoryIdentity,
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
-        latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        latestTurn: withLatestTurnFailure(
+          Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+          Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        ),
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,

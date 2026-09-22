@@ -12,6 +12,7 @@ import {
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProviderSession,
   type RuntimeMode,
   TurnId,
@@ -19,6 +20,10 @@ import {
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import {
+  buildForkProviderInput,
+  projectReadableThreadMessages,
+} from "@t3tools/shared/readableThreadTranscript";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -50,6 +55,10 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import {
+  classifyTurnFailureKind,
+  resolveTurnFailureReason,
+} from "../../provider/turnFailureReason.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -136,6 +145,23 @@ const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const PROVIDER_ACCOUNT_ROUTING_BLOCKED = Symbol("provider-account-routing-blocked");
 const MIN_PROVIDER_USAGE_FRESHNESS = Duration.minutes(10);
 const STARTING_SESSION_RECOVERY_TIMEOUT = Duration.seconds(5);
+
+/**
+ * A turn start that needs a session restart while the provider is still running
+ * a turn. It is not a failure: the start stays pending, and reconciliation
+ * replays it on the thread's selection once the running turn ends.
+ */
+const PROVIDER_SESSION_CARRIED_OVER = "provider.session.carried-over";
+
+class TurnStartDeferredError extends Schema.TaggedError<TurnStartDeferredError>()(
+  "TurnStartDeferredError",
+  { threadId: ThreadId },
+) {}
+const isTurnStartDeferredError = Schema.is(TurnStartDeferredError);
+const isTurnStartDeferred = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.some(
+    (reason) => Cause.isFailReason(reason) && isTurnStartDeferredError(reason.error),
+  );
 const TERMINAL_TURN_STATES = new Set(["completed", "error", "interrupted"]);
 
 function providerErrorLabel(value: string | undefined): string {
@@ -267,6 +293,9 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  // Threads whose provider session could not resume the conversation; the
+  // next send carries it as a transcript. Consumed by that send.
+  const threadsAwaitingHistoryImport = new Set<ThreadId>();
   const compactingThreadIds = new Set<ThreadId>();
   type QueuedTurnStart = Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>;
   // Turn starts received while a thread compacts, replayed in order once its session is restored.
@@ -455,6 +484,11 @@ const make = Effect.gen(function* () {
         status: session?.status === "stopped" ? "stopped" : "error",
         activeTurnId: null,
         lastError: input.detail,
+        lastErrorReason:
+          resolveTurnFailureReason({
+            message: input.detail,
+            providerInstanceId: session?.providerInstanceId ?? thread.modelSelection.instanceId,
+          }) ?? null,
         updatedAt: input.createdAt,
       },
       createdAt: input.createdAt,
@@ -722,18 +756,17 @@ const make = Effect.gen(function* () {
           detail: `Thread '${threadId}' is bound to driver '${currentInfo.driverKind}' and cannot switch to '${desiredInfo.driverKind}'.`,
         });
       }
-      if (
-        !allowIncompatibleUnstartedReplacement &&
-        currentInfo.continuationIdentity.continuationKey !==
-          desiredInfo.continuationIdentity.continuationKey
-      ) {
-        return yield* new ProviderAdapterRequestError({
-          provider: preferredProvider,
-          method: "thread.turn.start",
-          detail: `Thread '${threadId}' cannot switch from instance '${currentInstanceId}' to '${desiredInstanceId}' because their provider resume state is incompatible.`,
-        });
-      }
     }
+    // Another account's native session cannot be resumed here (its resume state
+    // lives in that account's store). Start fresh and carry the conversation
+    // over instead of failing the turn.
+    const resumeIncompatible =
+      !allowIncompatibleUnstartedReplacement &&
+      thread.session !== null &&
+      requestedModelSelection !== undefined &&
+      requestedModelSelection.instanceId !== currentInstanceId &&
+      currentInfo.continuationIdentity.continuationKey !==
+        desiredInfo.continuationIdentity.continuationKey;
     const project = yield* resolveProject(thread.projectId);
     const effectiveCwd = resolveThreadWorkspaceCwd({
       thread,
@@ -745,7 +778,10 @@ const make = Effect.gen(function* () {
           .pipe(Effect.forkDetach)
       : Effect.void;
 
-    const startProviderSession = (input?: { readonly resumeCursor?: unknown }) => {
+    const startProviderSession = (input?: {
+      readonly resumeCursor?: unknown;
+      readonly fresh?: true;
+    }) => {
       const startInput = {
         threadId,
         ...(preferredProvider ? { provider: preferredProvider } : {}),
@@ -756,13 +792,71 @@ const make = Effect.gen(function* () {
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
       };
-      const start = allowIncompatibleUnstartedReplacement
-        ? providerService.startSession(threadId, startInput, {
-            allowIncompatibleUnstartedReplacement: true,
-          })
-        : providerService.startSession(threadId, startInput);
+      const start =
+        allowIncompatibleUnstartedReplacement || input?.fresh === true
+          ? providerService.startSession(threadId, startInput, {
+              allowIncompatibleUnstartedReplacement: true,
+            })
+          : providerService.startSession(threadId, startInput);
       return start.pipe(Effect.tap(() => refreshWorkspaceSnapshot));
     };
+
+    // Resume when the provider can; otherwise start fresh and carry the
+    // conversation over. Only a resume-shaped failure falls back: a usage limit
+    // or a crash would fail the fresh start too, and must not throw away a
+    // session that is still resumable.
+    const carryConversationOver = (reason: string) =>
+      thread.latestTurn === null
+        ? Effect.void
+        : Effect.gen(function* () {
+            threadsAwaitingHistoryImport.add(threadId);
+            yield* Effect.logWarning(
+              "provider command reactor started a fresh provider session and will import history",
+              { threadId, desiredInstanceId, reason },
+            );
+            yield* orchestrationEngine.dispatch({
+              type: "thread.activity.append",
+              commandId: yield* serverCommandId("provider-session-carried-over"),
+              threadId,
+              activity: {
+                id: yield* serverEventId(),
+                tone: "info",
+                kind: PROVIDER_SESSION_CARRIED_OVER,
+                summary: `Continued in a new ${desiredInstanceId} session: the previous one could not be resumed, so the conversation was carried over`,
+                // The durable marker: history is imported while this is still the
+                // thread's latest turn, so a restart before the next send keeps it.
+                payload: {
+                  threadId,
+                  providerInstanceId: desiredInstanceId,
+                  reason,
+                  afterTurnId: thread.latestTurn?.turnId ?? null,
+                },
+                turnId: null,
+                createdAt,
+              },
+              createdAt,
+            });
+          });
+    const startWithResumeFallback = (resumeCursor: unknown) =>
+      (resumeIncompatible
+        ? startProviderSession({ fresh: true }).pipe(
+            Effect.tap(() => carryConversationOver("incompatible-resume-state")),
+          )
+        : startProviderSession(resumeCursor !== undefined ? { resumeCursor } : undefined).pipe(
+            Effect.catchCause((cause) =>
+              !Cause.hasInterruptsOnly(cause) &&
+              classifyTurnFailureKind(formatFailureDetail(cause)) === "session_resume"
+                ? startProviderSession({ fresh: true }).pipe(
+                    Effect.tap(() => carryConversationOver("resume-rejected")),
+                  )
+                : Effect.failCause(cause),
+            ),
+          )
+      ).pipe(
+        Effect.tap((session) =>
+          session.resumeDeclined === true ? carryConversationOver("resume-declined") : Effect.void,
+        ),
+      );
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
@@ -825,11 +919,37 @@ const make = Effect.gen(function* () {
         return existingSessionThreadId;
       }
 
-      const resumeCursor = allowIncompatibleUnstartedReplacement
-        ? undefined
-        : shouldRestartForModelChange
+      // Restarting tears down the provider process and any turn still running
+      // on it. A switch that lands mid-turn waits for the turn boundary: the
+      // next turn start comes back through here with the thread's selection.
+      if (activeSession?.activeTurnId != null) {
+        yield* Effect.logInfo(
+          "provider command reactor deferring provider session restart until the running turn ends",
+          {
+            threadId,
+            activeTurnId: activeSession.activeTurnId,
+            currentInstanceId,
+            desiredInstanceId,
+            runtimeModeChanged,
+            cwdChanged,
+            modelChanged,
+            instanceChanged,
+          },
+        );
+        // A new turn sent now would run on the old session; keep it pending instead.
+        if (options?.pendingTurnStart === true) {
+          return yield* new TurnStartDeferredError({ threadId });
+        }
+        yield* refreshWorkspaceSnapshot;
+        return existingSessionThreadId;
+      }
+
+      const resumeCursor =
+        allowIncompatibleUnstartedReplacement || resumeIncompatible
           ? undefined
-          : (activeSession?.resumeCursor ?? undefined);
+          : shouldRestartForModelChange
+            ? undefined
+            : (activeSession?.resumeCursor ?? undefined);
       yield* Effect.logInfo("provider command reactor restarting provider session", {
         threadId,
         existingSessionThreadId,
@@ -849,9 +969,7 @@ const make = Effect.gen(function* () {
         shouldRestartForModelSelectionChange,
         hasResumeCursor: resumeCursor !== undefined,
       });
-      const restartedSession = yield* startProviderSession(
-        resumeCursor !== undefined ? { resumeCursor } : undefined,
-      );
+      const restartedSession = yield* startWithResumeFallback(resumeCursor);
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
         previousSessionId: existingSessionThreadId,
@@ -864,7 +982,7 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    const startedSession = yield* startProviderSession(undefined);
+    const startedSession = yield* startWithResumeFallback(undefined);
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
@@ -1127,6 +1245,30 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * The provider input for the first turn on a session that could not resume:
+   * the thread's conversation before this message as a transcript, then the
+   * message. Falls back to the bare message when even the newest exchange will
+   * not fit; the carry-over notice has already told the user.
+   */
+  const withImportedHistory = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    messageId: MessageId,
+    messageText: string,
+  ) {
+    if (!threadsAwaitingHistoryImport.has(threadId)) return messageText;
+    const detail = yield* resolveThreadDetail(threadId);
+    const earlier = (detail?.messages ?? []).filter((message) => message.id !== messageId);
+    const imported = buildForkProviderInput({
+      messages: projectReadableThreadMessages(earlier),
+      continuation: messageText,
+      maxChars: PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+      intro:
+        "This conversation moved to a new provider session that could not resume the previous one. Continue from the transcript below, which may omit older messages, using the newest workspace state.\n\n",
+    });
+    return imported?.text ?? messageText;
+  });
+
   const buildSendTurnRequestForThread = Effect.fnUntraced(function* (input: {
     readonly threadId: ThreadId;
     readonly messageId: MessageId;
@@ -1156,7 +1298,12 @@ const make = Effect.gen(function* () {
     if (sessionModelSelection !== undefined) {
       threadModelSelections.set(input.threadId, sessionModelSelection);
     }
-    const normalizedInput = toNonEmptyProviderInput(input.messageText);
+    const messageText = yield* withImportedHistory(
+      input.threadId,
+      input.messageId,
+      input.messageText,
+    );
+    const normalizedInput = toNonEmptyProviderInput(messageText);
     const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
@@ -1868,6 +2015,17 @@ const make = Effect.gen(function* () {
       turnsAfterCompaction.set(event.payload.threadId, queued);
       return;
     }
+    // Claim the turn before the session work, not after it. Starting a session
+    // on another instance takes seconds, and pending-turn reconciliation replays
+    // any start it finds unclaimed; without the claim it restarts the session
+    // underneath this one and the turn dies mid-switch.
+    const pendingSendKey = `${event.payload.threadId}:${event.payload.messageId}`;
+    if (pendingTurnSends.has(pendingSendKey) || admittedPendingTurns.has(pendingSendKey)) {
+      return;
+    }
+    pendingTurnSends.add(pendingSendKey);
+    const releaseTurnClaim = Effect.sync(() => void pendingTurnSends.delete(pendingSendKey));
+
     const routedModelSelection = yield* maybeRouteProviderAccount({
       thread,
       ...(event.payload.modelSelection !== undefined
@@ -1877,8 +2035,9 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.createdAt,
       resumed: resumed !== undefined,
       allow: event.payload.allowProviderAccountRouting === true,
-    });
+    }).pipe(Effect.onError(() => releaseTurnClaim));
     if (routedModelSelection === PROVIDER_ACCOUNT_ROUTING_BLOCKED) {
+      yield* releaseTurnClaim;
       return;
     }
     const sendTurnRequest = yield* buildSendTurnRequestForThread({
@@ -1901,10 +2060,18 @@ const make = Effect.gen(function* () {
       reconcileDurableSelection: options?.recovery === true,
     }).pipe(
       Effect.map(Option.some),
-      Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+      Effect.catchCause((cause) =>
+        isTurnStartDeferred(cause)
+          ? Effect.logInfo("provider command reactor queued a turn start behind the running turn", {
+              threadId: event.payload.threadId,
+              messageId: event.payload.messageId,
+            }).pipe(Effect.as(Option.none()))
+          : handleTurnStartFailure(cause).pipe(Effect.as(Option.none())),
+      ),
     );
 
     if (Option.isNone(sendTurnRequest)) {
+      yield* releaseTurnClaim;
       return;
     }
 
@@ -1918,14 +2085,10 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) => handleTurnStartFailure(cause).pipe(Effect.as(false))),
     );
     if (!placementPersisted) {
+      yield* releaseTurnClaim;
       return;
     }
 
-    const pendingSendKey = `${event.payload.threadId}:${event.payload.messageId}`;
-    if (pendingTurnSends.has(pendingSendKey) || admittedPendingTurns.has(pendingSendKey)) {
-      return;
-    }
-    pendingTurnSends.add(pendingSendKey);
     const send = providerService.sendTurn(sendTurnRequest.value).pipe(
       Effect.tap((turn) =>
         associatePendingTurnAdmission({
@@ -1935,7 +2098,13 @@ const make = Effect.gen(function* () {
           settled: false,
         }),
       ),
-      Effect.tap(() => Effect.sync(() => void admittedPendingTurns.add(pendingSendKey))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          admittedPendingTurns.add(pendingSendKey);
+          // The transcript reached the provider; later sends need no import.
+          threadsAwaitingHistoryImport.delete(event.payload.threadId);
+        }),
+      ),
       Effect.asVoid,
       Effect.catchCause(recoverTurnStartFailure),
       Effect.ensuring(Effect.sync(() => void pendingTurnSends.delete(pendingSendKey))),
@@ -2003,6 +2172,9 @@ const make = Effect.gen(function* () {
         providerService.getPersistedTurnAdmission?.(threadId) ?? Effect.succeed(null)
       );
       if (persistedAdmission?.messageId === pending.value.messageId) {
+        // The provider already has this turn, transcript included; a marker
+        // restored at startup must not import it again on the next send.
+        threadsAwaitingHistoryImport.delete(threadId);
         const liveSessions = yield* providerService.listSessions();
         const providerStillRunsAdmission = liveSessions.some(
           (session) =>
@@ -2619,6 +2791,35 @@ const make = Effect.gen(function* () {
         )
     ).pipe(Effect.andThen(pendingTurnReconciliationWorker.drain));
 
+  // A restart between a carry-over and the next send empties the marker set;
+  // the persisted notice records the turn it follows, so rebuild it from there.
+  const restoreHistoryImports = Effect.gen(function* () {
+    const notices = yield* projectionSnapshotQuery.listActivitiesByKind(
+      PROVIDER_SESSION_CARRIED_OVER,
+    );
+    const latestByThread = new Map<string, unknown>();
+    for (const notice of notices) {
+      const payload = notice.payload as { threadId?: unknown; afterTurnId?: unknown } | null;
+      if (typeof payload?.threadId === "string") {
+        latestByThread.set(payload.threadId, payload.afterTurnId ?? null);
+      }
+    }
+    for (const [rawThreadId, afterTurnId] of latestByThread) {
+      const thread = yield* resolveThreadShell(ThreadId.make(rawThreadId));
+      if (thread && (thread.latestTurn?.turnId ?? null) === afterTurnId) {
+        threadsAwaitingHistoryImport.add(thread.id);
+      }
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.interrupt
+        : Effect.logWarning("provider command reactor failed to restore pending history imports", {
+            cause: Cause.pretty(cause),
+          }),
+    ),
+  );
+
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const pendingTitles = yield* findPendingThreadTitles().pipe(
       Effect.catchCause((cause) => {
@@ -2658,6 +2859,9 @@ const make = Effect.gen(function* () {
       }
     });
 
+    // Only fills an in-memory set, so it is safe before activation, and it must
+    // land before the first send is processed.
+    yield* restoreHistoryImports;
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));

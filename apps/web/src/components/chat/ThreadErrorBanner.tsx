@@ -1,3 +1,5 @@
+import type { TurnFailureReason } from "@t3tools/contracts";
+import { turnFailureHeadline } from "@t3tools/client-runtime/turn-failure";
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -35,9 +37,12 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
+  reason,
   onDismiss,
 }: {
   error: string | null;
+  /** The failed turn's typed reason, when the error is that turn's. */
+  reason?: TurnFailureReason | null;
   onDismiss?: () => void;
 }) {
   if (!error) return null;
@@ -46,6 +51,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
       <Alert variant="error" surface="glass" controlAlignment="first-line">
         <CircleAlertIcon />
         <AlertDescription>
+          {reason ? <p className="font-medium">{turnFailureHeadline(reason)}</p> : null}
           <Tooltip>
             <TooltipTrigger render={<div className="line-clamp-3" />}>{error}</TooltipTrigger>
             <TooltipPopup side="top" className="whitespace-pre-wrap">

@@ -35,6 +35,29 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+## Switching a started thread
+
+The thread's `modelSelection` is authoritative, and a switch is a compare-and-set.
+`thread.meta.update` and `thread.turn.start` carry `expectedModelSelection`: the selection the
+sender built against. When the thread moved since, the [decider](../../apps/server/src/orchestration/decider.ts)
+keeps the thread's selection and runs a stale turn on it, with a notice. A command without a basis
+stays an unconditional write, because `thread.turn.start` may switch a thread and a stale snapshot
+looks exactly like a choice without one; a client that can hold a stale selection must send it. A
+client that persists a
+selection and then sends must use that persisted selection as the turn's basis; the pre-persist
+value makes every deliberate switch look stale. Queued messages keep the basis from queue time.
+
+The [provider command reactor](../../apps/server/src/orchestration/Layers/ProviderCommandReactor.ts)
+claims a turn start before any session work, because pending-turn reconciliation replays unclaimed
+starts and would restart the session under a start still in progress. A restart requested while
+the provider runs a turn waits for the turn to end.
+
+When a session cannot resume, the reactor starts a fresh one and sends the conversation as a
+transcript with the next turn. Only a resume-shaped failure does this, so a usage limit never
+discards a resumable session. An adapter that starts fresh on its own after a refused resume must
+set `resumeDeclined` on the started session, as the Codex runtime does, or the agent silently
+loses the conversation.
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

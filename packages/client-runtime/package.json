@@ -23,6 +23,10 @@
       "types": "./src/projectFaviconCache.ts",
       "default": "./src/projectFaviconCache.ts"
     },
+    "./turn-failure": {
+      "types": "./src/turnFailure.ts",
+      "default": "./src/turnFailure.ts"
+    },
     "./pending-requests": {
       "types": "./src/pendingRequests.ts",
       "default": "./src/pendingRequests.ts"

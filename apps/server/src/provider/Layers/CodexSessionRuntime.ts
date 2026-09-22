@@ -720,6 +720,18 @@ interface CodexThreadOpenClient {
   >;
 }
 
+/**
+ * Whether an open that asked to resume came back on a different thread: the
+ * recoverable-refusal fallback below starts fresh, so the conversation is not
+ * in that thread's context and orchestration must carry it over.
+ */
+export function codexResumeDeclined(
+  resumeThreadId: string | undefined,
+  openedThreadId: string,
+): boolean {
+  return resumeThreadId !== undefined && openedThreadId !== resumeThreadId;
+}
+
 export const openCodexThread = (input: {
   readonly client: CodexThreadOpenClient;
   readonly threadId: ThreadId;
@@ -2438,6 +2450,7 @@ export const makeCodexSessionRuntime = (
       yield* client.notify("initialized", undefined);
 
       const requestedModel = normalizeCodexModelSlug(options.model);
+      const resumeThreadId = readResumeCursorThreadId(options.resumeCursor);
 
       const opened = yield* openCodexThread({
         client,
@@ -2446,7 +2459,7 @@ export const makeCodexSessionRuntime = (
         cwd: options.cwd,
         requestedModel,
         serviceTier: options.serviceTier,
-        resumeThreadId: readResumeCursorThreadId(options.resumeCursor),
+        resumeThreadId,
       });
 
       const providerThreadId = opened.thread.id;
@@ -2460,7 +2473,12 @@ export const makeCodexSessionRuntime = (
       } satisfies ProviderSession;
       yield* Ref.set(sessionRef, session);
       yield* emitSessionEvent("session/ready", "Codex App Server session ready.");
-      return session;
+      // A refused resume comes back as a fresh thread (openCodexThread's
+      // recoverable fallback). Report it on the start result only: it describes
+      // this start, not the session's lasting state.
+      return codexResumeDeclined(resumeThreadId, providerThreadId)
+        ? { ...session, resumeDeclined: true as const }
+        : session;
     });
 
     const readProviderThreadId = Effect.gen(function* () {

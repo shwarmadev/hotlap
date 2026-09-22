@@ -33,6 +33,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
+import { resolveTurnFailureReason } from "../../provider/turnFailureReason.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -1887,6 +1888,10 @@ const make = Effect.gen(function* () {
         event.type === "turn.started" ||
         isTerminalTurn
       ) {
+        const providerCrashedMidTurn =
+          event.type === "session.exited" &&
+          event.payload.exitKind === "error" &&
+          activeTurnId !== null;
         const status = (() => {
           switch (event.type) {
             case "session.state.changed": {
@@ -1896,7 +1901,9 @@ const make = Effect.gen(function* () {
             case "turn.started":
               return "running";
             case "session.exited":
-              return "stopped";
+              // A provider that died under a running turn failed that turn;
+              // an idle exit only ends the session.
+              return providerCrashedMidTurn ? "error" : "stopped";
             case "turn.aborted":
               return "interrupted";
             case "turn.completed":
@@ -1924,12 +1931,40 @@ const make = Effect.gen(function* () {
         const lastError =
           event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
-            : event.type === "turn.completed" &&
-                normalizeRuntimeTurnState(event.payload.state) === "failed"
-              ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
-              : status === "ready" || status === "interrupted"
-                ? null
-                : (thread.session?.lastError ?? null);
+            : providerCrashedMidTurn
+              ? (event.payload.reason ?? "The provider exited unexpectedly.")
+              : event.type === "turn.completed" &&
+                  normalizeRuntimeTurnState(event.payload.state) === "failed"
+                ? (event.payload.errorMessage ?? thread.session?.lastError ?? "Turn failed")
+                : status === "ready" || status === "interrupted"
+                  ? null
+                  : (thread.session?.lastError ?? null);
+        // An event that only carries the session's existing message forward
+        // must not downgrade the classification that came with it.
+        const inheritedErrorReason =
+          lastError !== null && lastError === thread.session?.lastError
+            ? (thread.session.lastErrorReason ?? undefined)
+            : undefined;
+        const adapterErrorReason =
+          event.type === "turn.completed"
+            ? event.payload.errorReason
+            : providerCrashedMidTurn && lastError !== null
+              ? { kind: "provider_crash" as const, message: lastError }
+              : undefined;
+        const lastErrorReason =
+          lastError === null
+            ? null
+            : (resolveTurnFailureReason({
+                ...(adapterErrorReason !== undefined
+                  ? { reason: adapterErrorReason }
+                  : inheritedErrorReason !== undefined
+                    ? { reason: inheritedErrorReason }
+                    : {}),
+                message: lastError,
+                ...(event.providerInstanceId !== undefined
+                  ? { providerInstanceId: event.providerInstanceId }
+                  : {}),
+              }) ?? null);
 
         if (shouldApplyThreadLifecycle) {
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
@@ -1971,6 +2006,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              lastErrorReason,
               updatedAt: now,
             },
             createdAt: now,
@@ -2451,6 +2487,14 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = event.payload.message;
+        const runtimeErrorReason =
+          resolveTurnFailureReason({
+            ...(event.payload.reason !== undefined ? { reason: event.payload.reason } : {}),
+            message: runtimeErrorMessage,
+            ...(event.providerInstanceId !== undefined
+              ? { providerInstanceId: event.providerInstanceId }
+              : {}),
+          }) ?? null;
 
         const shouldApplyRuntimeError = !STRICT_PROVIDER_LIFECYCLE_GUARD
           ? true
@@ -2474,6 +2518,7 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: eventTurnId ?? null,
               lastError: runtimeErrorMessage,
+              lastErrorReason: runtimeErrorReason,
               updatedAt: now,
             },
             createdAt: now,

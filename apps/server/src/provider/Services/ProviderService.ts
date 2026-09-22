@@ -39,8 +39,9 @@ import type { ProviderInstanceRoutingInfo } from "./ProviderAdapterRegistry.ts";
 
 export interface ProviderSessionStartOptions {
   /**
-   * Allows replacing an incompatible provider binding only while orchestration
-   * has verified that the thread has never started a turn.
+   * Allows replacing an incompatible provider binding when orchestration will
+   * not resume it: the thread has never started a turn, or orchestration is
+   * carrying the conversation into the fresh session itself.
    */
   readonly allowIncompatibleUnstartedReplacement?: true;
 }

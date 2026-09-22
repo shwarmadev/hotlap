@@ -90,6 +90,8 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
+import { TurnFailedNotice } from "./TurnFailedNotice";
+import { turnFailureReasonForSession } from "@t3tools/contracts";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
   FloatingWorkingControl,
@@ -320,6 +322,12 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const windowHeight = useWindowDimensions().height;
   const navigationHeaderHeight = useContext(HeaderHeightContext) || insets.top + IOS_NAV_BAR_HEIGHT;
   const agentLabel = `${props.selectedThread.modelSelection.instanceId} agent`;
+  // Covers turn-start failures too: they leave the session in error without
+  // settling a turn. Clears as soon as the next turn starts.
+  const selectedThreadFailure =
+    props.selectedThread.session?.status === "error"
+      ? turnFailureReasonForSession(props.selectedThread.session)
+      : null;
   const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const draftMessageRef = useRef(props.draftMessage);
@@ -991,6 +999,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                       environmentId={props.environmentId}
                       onClose={dismissUsageLimits}
                     />
+                  </Animated.View>
+                ) : null}
+                {selectedThreadFailure !== null && props.creationState?.kind !== "failed" ? (
+                  <Animated.View
+                    className="shrink-0 px-4 pb-3"
+                    entering={FadeInDown.duration(220)}
+                    exiting={FadeOut.duration(140)}
+                  >
+                    <TurnFailedNotice reason={selectedThreadFailure} />
                   </Animated.View>
                 ) : null}
                 {props.creationState?.kind === "failed" ? (

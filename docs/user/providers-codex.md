@@ -60,6 +60,11 @@ Choose the other account from the thread's model picker. T3 Code offers compatib
 Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
 not move the conversation into a separate Codex home.
 
+A switch made while Codex is working applies when the current turn ends. A message
+you queued before switching is sent on the new account, and the thread notes it.
+If the new account cannot resume the conversation, T3 Code starts a fresh session
+on it and carries the conversation over, and the thread says so.
+
 If the account is missing from the picker, compare the home paths in provider
 settings. If two instances show the same unexpected account or models, check their
 reported accounts, refresh provider status, and confirm the second instance has
@@ -84,8 +89,9 @@ for command and file approvals.
 
 ## Codex says I hit a usage limit
 
-When Codex stops on a usage limit, the thread names the window that ran out and
-when it resets, when Codex reports them. Send the message again after the reset. On a workspace plan the
+When Codex stops on a usage limit, the thread names the account, the window that
+ran out, and the time it resets, when Codex reports them. Send the message again
+after the reset, or switch the thread to another account. On a workspace plan the
 message also says whether your workspace owner needs to add credits or raise the
 spend limit to continue sooner.
 

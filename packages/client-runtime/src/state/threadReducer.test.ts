@@ -1009,6 +1009,80 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.latestTurn?.state).toBe("running");
       }
     });
+
+    it("gives a turn that ends in error the session's typed reason, live", () => {
+      const reason = {
+        kind: "usage_limit" as const,
+        message: "Codex usage limit reached. The weekly limit resets in 32m.",
+        resetsAt: "2026-09-21T01:42:00.000Z",
+      };
+      const running: OrchestrationThread = {
+        ...baseThread,
+        latestTurn: {
+          turnId: TurnId.make("turn-1"),
+          state: "running",
+          requestedAt: "2026-09-21T01:09:00.000Z",
+          startedAt: "2026-09-21T01:09:00.000Z",
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      };
+      const sessionSet = (session: {
+        status: "error" | "running";
+        activeTurnId: TurnId | null;
+        lastError: string | null;
+        lastErrorReason?: typeof reason;
+      }) =>
+        ({
+          ...baseEventFields,
+          sequence: 9,
+          occurredAt: "2026-09-21T01:10:00.000Z",
+          aggregateKind: "thread",
+          aggregateId: ThreadId.make("thread-1"),
+          type: "thread.session-set",
+          payload: {
+            threadId: ThreadId.make("thread-1"),
+            session: {
+              threadId: ThreadId.make("thread-1"),
+              providerName: "codex",
+              runtimeMode: "full-access",
+              updatedAt: "2026-09-21T01:10:00.000Z",
+              ...session,
+            },
+          },
+        }) as const;
+
+      const failed = applyThreadDetailEvent(
+        running,
+        sessionSet({
+          status: "error",
+          activeTurnId: null,
+          lastError: reason.message,
+          lastErrorReason: reason,
+        }),
+      );
+      expect(failed.kind === "updated" && failed.thread.latestTurn).toMatchObject({
+        state: "error",
+        error: reason,
+      });
+
+      const retried =
+        failed.kind === "updated"
+          ? applyThreadDetailEvent(
+              failed.thread,
+              sessionSet({
+                status: "running",
+                activeTurnId: TurnId.make("turn-2"),
+                lastError: null,
+              }),
+            )
+          : failed;
+      expect(retried.kind === "updated" && retried.thread.latestTurn).toMatchObject({
+        turnId: "turn-2",
+        state: "running",
+        error: null,
+      });
+    });
   });
 
   describe("thread.session-stop-requested", () => {
