@@ -220,13 +220,21 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
  * are left out; there is nothing for the user to act on. The environment
  * is named only when more than one is connected.
  */
-export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
+export function collectLimitNotices(
+  presentations: LimitPresentations,
+  options: {
+    /** False when each provider's failure already shows on its own row. */
+    readonly providers?: boolean;
+  } = {},
+): readonly string[] {
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices: string[] = [];
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
-    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+    const providers =
+      options.providers === false ? [] : (presentation.serverConfig?.providers ?? []);
+    for (const provider of providersWithLimits(providers)) {
       // An account that can never report (API key) is left out; one that
       // failed, or reported nothing at all, is worth a line.
       if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
@@ -243,6 +251,143 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
     }
   }
   return notices;
+}
+
+/**
+ * Drivers whose native instances always publish `usageLimits` once probed, so
+ * a missing snapshot means "not reported yet" rather than "no notion of usage".
+ */
+const SUBSCRIPTION_USAGE_DRIVERS: ReadonlySet<string> = new Set(["claudeAgent", "codex"]);
+
+/** Provider groups read in this order; any other driver follows in first-seen order. */
+const DRIVER_ORDER: readonly string[] = ["claudeAgent", "codex"];
+
+/**
+ * One row on the per-account Limits view. An account row carries that
+ * account's own windows; an empty row is a configured, enabled instance that
+ * has nothing to draw yet, so the lane shows instead of vanishing.
+ */
+export type LimitRow =
+  | {
+      readonly kind: "account";
+      readonly key: string;
+      readonly displayName: string | null;
+      readonly account: LimitAccount;
+      readonly windows: readonly ServerProviderUsageWindow[];
+    }
+  | {
+      readonly kind: "empty";
+      readonly key: string;
+      readonly displayName: string | null;
+      readonly driver: ServerProvider["driver"];
+      readonly accentColor: string | undefined;
+      readonly environments: LimitAccount["environments"];
+      readonly message: string;
+      readonly windows: readonly [];
+    };
+
+export interface LimitGroup {
+  readonly driver: ServerProvider["driver"];
+  readonly rows: readonly LimitRow[];
+}
+
+/**
+ * Limits grouped by provider, one row per account, never averaged across
+ * accounts: separate subscriptions have separate quotas, so a pooled figure
+ * answers no real question. Every enabled instance that can report usage gets
+ * a row, including one that has not reported yet or whose read failed.
+ * Rows sort by name; windows sort session, weekly, monthly, other.
+ */
+export function collectLimitGroups(presentations: LimitPresentations): readonly LimitGroup[] {
+  const accounts = collectLimitAccounts(presentations);
+  const rows: LimitRow[] = accounts.map((account) => ({
+    kind: "account",
+    key: account.key,
+    displayName: account.displayName,
+    account,
+    windows: [...account.limits.windows].sort(
+      (left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    ),
+  }));
+  const reported = new Set(
+    accounts.flatMap((account) => {
+      const key = accountKey(account.driver, account.email);
+      return key ? [key] : [];
+    }),
+  );
+  const empty = new Map<string, Extract<LimitRow, { kind: "empty" }>>();
+  for (const [environmentId, presentation] of presentations) {
+    for (const provider of presentation.serverConfig?.providers ?? []) {
+      if (!provider.enabled || !isProviderAvailable(provider)) continue;
+      // A CLI that is not there at all is a setup problem, not a quota lane.
+      if (!provider.installed && provider.status === "error") continue;
+      const limits = provider.usageLimits;
+      if (
+        limits
+          ? limits.unavailable?.reason === "unsupported"
+          : !SUBSCRIPTION_USAGE_DRIVERS.has(provider.driver)
+      ) {
+        continue;
+      }
+      const notice = limits ? limitsNotice(limits) : "none";
+      if (notice === null) continue;
+      const key =
+        accountKey(provider.driver, provider.auth.email) ??
+        `${environmentId}:${provider.instanceId}`;
+      if (reported.has(key)) continue;
+      const environment = { environmentId, label: presentation.entry.target.label };
+      const previous = empty.get(key);
+      if (previous) {
+        empty.set(key, {
+          ...previous,
+          environments: previous.environments.some((seen) => seen.environmentId === environmentId)
+            ? previous.environments
+            : [...previous.environments, environment],
+        });
+        continue;
+      }
+      empty.set(key, {
+        kind: "empty",
+        key: `${environmentId}:${provider.instanceId}`,
+        displayName: provider.displayName?.trim() || null,
+        driver: provider.driver,
+        accentColor: provider.accentColor,
+        environments: [environment],
+        message:
+          limits?.unavailable?.reason === "probeFailed"
+            ? (limits.unavailable.message ?? "Could not read limits.")
+            : "No usage reported yet",
+        windows: [],
+      });
+    }
+  }
+  rows.push(...empty.values());
+  const byDriver = new Map<ServerProvider["driver"], LimitRow[]>();
+  for (const row of rows) {
+    const driver = row.kind === "account" ? row.account.driver : row.driver;
+    const list = byDriver.get(driver);
+    if (list) list.push(row);
+    else byDriver.set(driver, [row]);
+  }
+  const rank = (driver: string) => {
+    const index = DRIVER_ORDER.indexOf(driver);
+    return index === -1 ? DRIVER_ORDER.length : index;
+  };
+  return [...byDriver]
+    .sort(([left], [right]) => rank(left) - rank(right))
+    .map(([driver, list]) => ({
+      driver,
+      rows: list.sort(
+        (left, right) =>
+          rowSortName(left).localeCompare(rowSortName(right)) || left.key.localeCompare(right.key),
+      ),
+    }));
+}
+
+function rowSortName(row: LimitRow): string {
+  return row.kind === "account"
+    ? accountSortName(row.account)
+    : (row.displayName ?? row.key).toLowerCase();
 }
 
 export interface LimitPoolMember {

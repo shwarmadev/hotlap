@@ -14,6 +14,7 @@ import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
+  collectLimitGroups,
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
@@ -1006,5 +1007,150 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("collectLimitGroups", () => {
+  const checkedAt = "2026-09-23T11:00:00.000Z";
+  const codex = ProviderDriverKind.make("codex");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const laptop = EnvironmentId.make("env-a");
+  const weekly = {
+    id: "secondary",
+    kind: "weekly",
+    label: "Weekly",
+    usedPercent: 10,
+    windowDurationMins: 7 * 24 * 60,
+    resetsAt: "2026-09-06T12:00:00.000Z",
+  } as const;
+  const lane = (
+    id: string,
+    name: string,
+    driver: ServerProvider["driver"],
+    overrides: Partial<ServerProvider>,
+  ) =>
+    provider({
+      instanceId: ProviderInstanceId.make(id),
+      driver,
+      displayName: name,
+      auth: { status: "authenticated", email: `${id}@example.com` },
+      ...overrides,
+    });
+  const presentations = (providers: ServerProvider[]) =>
+    new Map([[laptop, { entry: { target: { label: "Laptop" } }, serverConfig: { providers } }]]);
+
+  it("keeps every account of one provider as its own row with its own windows", () => {
+    const groups = collectLimitGroups(
+      presentations([
+        lane("codex-team", "Codex · Team", codex, {
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 90 }] },
+        }),
+        lane("codex-personal", "Codex · Personal", codex, {
+          usageLimits: { checkedAt, windows: [weekly, { ...window, usedPercent: 20 }] },
+        }),
+        lane("codex-agents", "Codex · Agents", codex, {
+          usageLimits: { checkedAt, windows: [{ ...window, usedPercent: 60 }] },
+        }),
+      ]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.driver).toBe("codex");
+    const rows = groups[0]!.rows;
+    // Sorted by name, never merged: three accounts are three rows.
+    expect(rows.map((row) => row.displayName)).toEqual([
+      "Codex · Agents",
+      "Codex · Personal",
+      "Codex · Team",
+    ]);
+    expect(rows.map((row) => row.windows.map(remainingPercent))).toEqual([[40], [80, 90], [10]]);
+    // Session before weekly, whatever order the provider reported them in.
+    expect(rows[1]!.windows.map((entry) => entry.kind)).toEqual(["session", "weekly"]);
+    expect(rows.every((row) => row.kind === "account")).toBe(true);
+  });
+
+  it("keeps an enabled lane that has not reported yet, instead of dropping it", () => {
+    const groups = collectLimitGroups(
+      presentations([
+        lane("claude-personal", "Claude · Personal", claude, {
+          usageLimits: { checkedAt, windows: [window] },
+        }),
+        // Just logged in: the probe has not published usage at all yet.
+        lane("claude-team", "Claude · Team", claude, { status: "warning", installed: false }),
+        // Probed, but nothing came back.
+        lane("codex-team", "Codex · Team", codex, { usageLimits: { checkedAt, windows: [] } }),
+      ]),
+    );
+    expect(groups.map((group) => group.driver)).toEqual(["claudeAgent", "codex"]);
+    expect(groups[0]!.rows).toMatchObject([
+      { kind: "account", displayName: "Claude · Personal" },
+      { kind: "empty", displayName: "Claude · Team", message: "No usage reported yet" },
+    ]);
+    expect(groups[1]!.rows).toMatchObject([
+      { kind: "empty", displayName: "Codex · Team", message: "No usage reported yet" },
+    ]);
+  });
+
+  it("leaves out disabled lanes, API-key accounts, missing CLIs and drivers with no usage", () => {
+    const groups = collectLimitGroups(
+      presentations([
+        lane("off", "Codex · Off", codex, { enabled: false }),
+        lane("api", "Claude · API", claude, {
+          usageLimits: { checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+        }),
+        lane("missing", "Claude · Missing", claude, { installed: false, status: "error" }),
+        lane("cursor", "Cursor", ProviderDriverKind.make("cursor"), {}),
+      ]),
+    );
+    expect(groups).toEqual([]);
+  });
+
+  it("shows a failed read on the lane's own row", () => {
+    const groups = collectLimitGroups(
+      presentations([
+        lane("codex-team", "Codex · Team", codex, {
+          usageLimits: {
+            checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed", message: "Rate limit read timed out." },
+          },
+        }),
+      ]),
+    );
+    expect(groups[0]!.rows).toMatchObject([
+      { kind: "empty", displayName: "Codex · Team", message: "Rate limit read timed out." },
+    ]);
+  });
+
+  it("does not add an empty row for a lane a hub already reports", () => {
+    const groups = collectLimitGroups(
+      new Map([
+        [
+          laptop,
+          {
+            entry: { target: { label: "Laptop" } },
+            serverConfig: {
+              providers: [lane("codex-team", "Codex · Team", codex, {})],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("hub"),
+                  kind: "cliproxy" as const,
+                  label: "hub",
+                  checkedAt,
+                  accounts: [
+                    {
+                      id: "codex-team.json",
+                      driver: codex,
+                      email: "codex-team@example.com",
+                      usageLimits: { checkedAt, windows: [window] },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(groups[0]!.rows).toMatchObject([{ kind: "account" }]);
   });
 });
