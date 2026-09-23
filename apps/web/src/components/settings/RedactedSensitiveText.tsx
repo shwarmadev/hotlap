@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -31,11 +32,25 @@ export function RedactedSensitiveText(props: {
   readonly hideTooltip: string;
   readonly className?: string;
 }) {
+  const revealAlways = useClientSettings((settings) => settings.revealSensitiveText);
   const [revealed, setRevealed] = useState(false);
   const value = props.value?.trim();
   const redacted = useMemo(() => (value ? redactedPlaceholder(value) : ""), [value]);
 
   if (!value) return null;
+
+  if (revealAlways) {
+    return (
+      <span
+        className={cn(
+          "min-w-0 font-mono text-[11px] leading-none text-muted-foreground",
+          props.className,
+        )}
+      >
+        {value}
+      </span>
+    );
+  }
 
   return (
     <Tooltip>

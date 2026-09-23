@@ -210,6 +210,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "reveal-sensitive-text",
+    title: "Show account emails",
+    to: "/settings/appearance",
+    searchTerms: ["reveal blur redact hide privacy email address account identifiers"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

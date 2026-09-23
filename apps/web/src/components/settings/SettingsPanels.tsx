@@ -575,6 +575,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
         ? ["Proactive panels"]
         : []),
+      ...(settings.revealSensitiveText !== DEFAULT_UNIFIED_SETTINGS.revealSensitiveText
+        ? ["Show account emails"]
+        : []),
       ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
         ? ["Show skills in slash menu"]
         : []),
@@ -658,6 +661,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
       settings.proactivePanelsEnabled,
+      settings.revealSensitiveText,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
@@ -761,6 +765,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
+      revealSensitiveText: DEFAULT_UNIFIED_SETTINGS.revealSensitiveText,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1382,6 +1387,31 @@ export function AppearanceSettingsPanel() {
                 </SelectPopup>
               </Select>
             </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("reveal-sensitive-text")}
+          description="Show account emails in full instead of blurring them until clicked."
+          resetAction={
+            settings.revealSensitiveText !== DEFAULT_UNIFIED_SETTINGS.revealSensitiveText ? (
+              <SettingResetButton
+                label="show account emails"
+                onClick={() =>
+                  updateSettings({
+                    revealSensitiveText: DEFAULT_UNIFIED_SETTINGS.revealSensitiveText,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.revealSensitiveText}
+              onCheckedChange={(checked) =>
+                updateSettings({ revealSensitiveText: Boolean(checked) })
+              }
+              aria-label="Show account emails"
+            />
           }
         />
       </SettingsSection>
