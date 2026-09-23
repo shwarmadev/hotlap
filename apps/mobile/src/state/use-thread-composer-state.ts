@@ -39,7 +39,7 @@ import {
   routingModeAfterManualModelSelection,
   shouldClearAcknowledgedProviderRoutingIntent,
 } from "../lib/providerRouting";
-import { resolveProviderInteractionMode } from "../features/threads/legacy-plan-mode";
+import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 import {
   convertPastedImagesToAttachments,
   createPastedTextComposerAttachment,
