@@ -180,7 +180,6 @@ import {
   removeComposerDraftsForEnvironment,
   replaceComposerDraftAttachments,
   resetComposerDraftsLoadState,
-  retainComposerAttachmentFileForPreview,
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
@@ -196,6 +195,7 @@ import {
   undoComposerDraftMergeState,
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
+import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 
 const DRAFT: ComposerDraft = {
   text: "hello",

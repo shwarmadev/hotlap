@@ -66,6 +66,7 @@ import Migration0050 from "./Migrations/050_ProjectionThreadPullRequests.ts";
 import Migration0051 from "./Migrations/051_ProjectionThreadMessageContext.ts";
 import Migration0052 from "./Migrations/052_ProjectionThreadTitleState.ts";
 import Migration0053 from "./Migrations/053_PullRequestFilesViewed.ts";
+import Migration0054 from "./Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts";
 import { prepareMigrationLedgers, runHotlapMigrations } from "./HotlapMigrations.ts";
 
 /**
@@ -132,13 +133,18 @@ const migrationEffects = {
   51: Migration0051,
   52: Migration0052,
   53: Migration0053,
+  54: Migration0054,
 } as const;
 
-const migrationEntries = upstreamMigrationManifest.map(
+// TODO(sync): move this entry into @t3tools/shared/upstreamMigrationManifest.
+export const migrationManifest = [
+  ...upstreamMigrationManifest,
+  [54, "ProjectionThreadsAutoSettleDisabledAt"],
+] as const;
+
+const migrationEntries = migrationManifest.map(
   ([id, name]) => [id, name, migrationEffects[id]] as const,
 );
-
-export const migrationManifest = upstreamMigrationManifest;
 
 const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
