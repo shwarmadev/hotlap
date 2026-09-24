@@ -10,14 +10,12 @@ import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
-  resolveSidebarStageFocusRingOffsetClass,
   SidebarStageBackdrop,
   useEnvironmentStageLabel,
 } from "../SidebarStageBackdrop";
 import { Badge } from "../ui/badge";
 import {
   SidebarFooter,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -48,20 +46,18 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
       : null;
 
   return (
-    <SidebarHeader
+    // The titlebar row, not a padded SidebarHeader: it aligns to the window controls.
+    <div
       className={cn(
-        "@container/sidebar-header relative h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center px-3 py-0 md:px-0",
+        "@container/sidebar-header relative flex h-[var(--workspace-topbar-height)] shrink-0 flex-row items-center gap-2 px-3 md:px-0",
         isElectron && "drag-region",
       )}
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       <SidebarTrigger
-        className={cn(
-          "relative z-10 md:hidden",
-          backdropVariant &&
-            "focus-visible:ring-white/90 [&_svg]:stroke-white/90! [&_svg]:opacity-100! [&_svg]:hover:stroke-white! [:hover,[data-pressed]]:bg-white/15",
-          backdropVariant && resolveSidebarStageFocusRingOffsetClass(backdropVariant),
-        )}
+        // Over the stage artwork: the media viewer's control-on-imagery treatment.
+        variant={backdropVariant ? "media-navigation" : "ghost"}
+        className="relative top-auto z-10 translate-y-0 md:hidden"
       />
       <SidebarBrand onBackdrop={backdropVariant !== null} />
       {pillLabel ? (
@@ -74,7 +70,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           {pillLabel}
         </Badge>
       ) : null}
-    </SidebarHeader>
+    </div>
   );
 });
 
