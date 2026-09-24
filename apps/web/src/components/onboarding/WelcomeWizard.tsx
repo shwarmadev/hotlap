@@ -193,7 +193,7 @@ export function WelcomeWizard({
           identity={
             <div className="flex items-baseline gap-1.5" role="img" aria-label="Hotlap">
               <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-[1.4rem] font-medium tracking-tight text-muted-foreground">
+              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
                 Hotlap
               </span>
             </div>
@@ -357,12 +357,13 @@ function ConnectionStep({
               render={
                 <Button
                   variant="ghost"
-                  className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
+                  size="sm-multiline"
+                  className="min-h-14 w-full justify-start"
                 />
               }
             >
               <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1">Add a computer</span>
+              <span className="flex-1 text-left">Add a computer</span>
               <ChevronRightIcon
                 className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
               />
@@ -429,14 +430,11 @@ function ConnectAccountOption({
             }
           }}
           render={
-            <Button
-              variant="ghost"
-              className="h-auto min-h-14 w-full justify-start gap-3 px-3 py-3 text-left whitespace-normal sm:h-auto"
-            />
+            <Button variant="ghost" size="sm-multiline" className="min-h-14 w-full justify-start" />
           }
         >
           <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1">T3 Connect</span>
+          <span className="flex-1 text-left">T3 Connect</span>
           <span className="text-xs text-muted-foreground">
             {!isLoaded
               ? "Loading sign-in…"
@@ -584,8 +582,8 @@ function PairingForm({
               {isPairing ? "Pairing..." : "Pair"}
             </Button>
           </div>
-          <CollapsiblePanel className="pt-3">
-            <p className="text-sm text-muted-foreground">
+          <CollapsiblePanel>
+            <p className="pt-3 text-sm text-muted-foreground">
               Run this on the computer with your code.
             </p>
             <CommandBlock command="npx hotlap pair" className="mt-2" />
@@ -889,9 +887,12 @@ function AgentInstallTerminal({
   ]);
 
   return (
-    <div className="thread-terminal-drawer mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground">
+    <div
+      data-thread-terminal-drawer
+      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
+    >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground">
+        <span className="text-2xs font-medium text-muted-foreground">
           {setupState === "writeFailed" ? (
             <>
               Run <code className="rounded bg-muted px-1 font-mono">{command}</code> in this
@@ -1444,9 +1445,7 @@ function ImportCandidateRow({
             {label}
           </span>
           {secondary !== undefined ? (
-            <span className="truncate font-mono text-[11px] text-muted-foreground">
-              {secondary}
-            </span>
+            <span className="truncate font-mono text-2xs text-muted-foreground">{secondary}</span>
           ) : null}
         </TooltipTrigger>
         <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
