@@ -218,7 +218,7 @@ function PullRequestGroupHeader({
       <Icon aria-hidden className="size-3.5 shrink-0" />
       <h2 className="shrink-0">{group.label}</h2>
       <span className="shrink-0 tabular-nums text-muted-foreground/50">{group.entries.length}</span>
-      <Separator className="min-w-2 flex-1 bg-border/60" />
+      <Separator className="min-w-2 flex-1" />
     </div>
   );
 }
@@ -1819,7 +1819,7 @@ function PullRequestsRouteView() {
       )}
 
       {listQuery.error && shownCount > 0 ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{listQuery.error} Showing the last pull requests loaded.</span>
           <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
             Retry
@@ -2234,16 +2234,13 @@ function CompactFilterMenu<Value extends string>({
         aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
         title={iconOnly ? `${label}: ${current.label}` : undefined}
         render={
-          outlined ? <Button variant="outline" size={iconOnly ? "icon" : "default"} /> : undefined
+          outlined ? (
+            <Button variant="outline" size={iconOnly ? "icon" : "default"} />
+          ) : (
+            <Button variant="ghost-muted" size="sm" />
+          )
         }
-        className={
-          outlined
-            ? className
-            : cn(
-                "inline-flex h-7 min-w-0 items-center gap-1 rounded-md px-1.5 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-                className,
-              )
-        }
+        className={cn("min-w-0", className)}
       >
         {iconOnly ? (
           <current.Icon aria-hidden className="size-4" />
