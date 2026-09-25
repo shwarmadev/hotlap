@@ -245,7 +245,7 @@ export const layer = Layer.effect(McpSessionRegistry, make);
 export const issueActiveMcpCredential = (
   request: McpCredentialRequest,
 ): Effect.Effect<McpIssuedCredential | undefined> =>
-  activeMcpSessionRegistry ? activeMcpSessionRegistry.issue(request) : Effect.succeed(undefined);
+  activeMcpSessionRegistry ? activeMcpSessionRegistry.issue(request) : Effect.undefined;
 
 /**
  * Refreshes the liveness of a thread's MCP credential. Called on every provider
