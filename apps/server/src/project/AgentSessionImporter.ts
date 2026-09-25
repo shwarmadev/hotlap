@@ -145,6 +145,7 @@ function hasImportBlockingActivity(
     thread.snoozedAt != null ||
     thread.pinnedAt != null ||
     thread.pinOrderKey != null ||
+    thread.autoSettleDisabledAt != null ||
     thread.titleRegeneration != null ||
     thread.linkedPullRequest != null ||
     thread.unsettledAt != null ||
