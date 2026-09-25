@@ -63,6 +63,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { sortModelsByTokens } from "./usageBreakdown";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import {
   readUsagePagePreferences,
@@ -141,9 +142,7 @@ export function UsagePage() {
   const breakdownModels = useMemo(
     () =>
       breakdown === "model" && metric === "tokens"
-        ? merged.models.toSorted(
-            (left, right) => right.totalTokens - left.totalTokens || right.costUsd - left.costUsd,
-          )
+        ? sortModelsByTokens(merged.models)
         : merged.models,
     [breakdown, merged.models, metric],
   );
@@ -429,7 +428,7 @@ export function UsagePage() {
                                 <span className="truncate">
                                   {PROVIDER_PRESENTATION[provider].label}
                                 </span>
-                                <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
+                                <span className="shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums">
                                   {sessionLabel}
                                 </span>
                               </span>
@@ -739,7 +738,7 @@ function UsageEnvironmentFilter({
       <Menu>
         <MenuTrigger
           render={<InlineButton />}
-          className="group/usage-environment min-w-0 max-w-full gap-1"
+          className="group/usage-environment min-w-0 max-w-full"
         >
           <span className="min-w-0 truncate">{label}</span>
           <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
@@ -754,7 +753,7 @@ function UsageEnvironmentFilter({
               </>
             ) : showUsageStatus && hasIssue ? (
               <CircleAlertIcon
-                className="size-3.5 text-amber-600 dark:text-amber-400"
+                className="size-3.5 text-warning-foreground"
                 aria-label="Some environments could not report usage"
               />
             ) : (
