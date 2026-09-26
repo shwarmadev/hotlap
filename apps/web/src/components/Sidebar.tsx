@@ -53,6 +53,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  EllipsisIcon,
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
@@ -306,7 +307,18 @@ function WorkingDuration(props: { startedAt: string | null }) {
   return <span className="tabular-nums">{formatWorkingDurationLabel(Date.now() - startedMs)}</span>;
 }
 
-const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
+// One glyph per row status, shared by the card's status label and the slim
+// row's icon-only status.
+const SIDEBAR_STATUS_ICONS = {
+  working: CircleDashedIcon,
+  input: MessageCircleQuestionIcon,
+  approval: ShieldQuestionIcon,
+  failed: CircleAlertIcon,
+  monitoring: EyeIcon,
+  done: CircleCheckIcon,
+} as const;
+
+export const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
 // Collapsed shelves share one empty list so a route change alone does not
 // give the sidebar list a new identity.
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
@@ -637,17 +649,23 @@ function SidebarDragBoundary(props: {
 }
 
 // Shelf headers stay visible and keep their measured height while dragging.
-function SidebarSectionHeader(props: {
-  marker: "snoozed-header" | "settled-header";
+// Without a marker the header sits outside the sortable thread list (the
+// Master workspace's sections and project groups): a plain list item that may
+// carry a leading icon and a muted count, and is static when it has no toggle.
+export function SidebarSectionHeader(props: {
+  marker?: "snoozed-header" | "settled-header";
+  tone?: "snoozed";
   label: string;
+  icon?: ReactNode;
+  detail?: string;
   className?: string;
   // While dragging, the settled header reads at full strength and takes the
   // accent while the lifted row is over it.
   dragging?: boolean;
   isDropTarget?: boolean;
-  toggle: { expanded: boolean; onToggle: () => void };
+  toggle?: { expanded: boolean; onToggle: () => void };
 }) {
-  const snoozed = props.marker === "snoozed-header";
+  const snoozed = props.marker === "snoozed-header" || props.tone === "snoozed";
   const className = cn(
     "flex h-full w-full items-center gap-2 px-2 text-left text-xs font-medium",
     snoozed ? "text-info-foreground" : "text-sidebar-muted-foreground/60",
@@ -656,7 +674,9 @@ function SidebarSectionHeader(props: {
   );
   const content = (
     <>
-      <span className="shrink-0">{props.label}</span>
+      {props.icon}
+      <span className={props.marker ? "shrink-0" : "min-w-0 truncate"}>{props.label}</span>
+      {props.detail ? <span className="shrink-0 font-normal">{props.detail}</span> : null}
       <span
         aria-hidden
         className={cn(
@@ -666,30 +686,42 @@ function SidebarSectionHeader(props: {
           props.isDropTarget && "bg-primary/50",
         )}
       />
-      <ChevronDownIcon
-        aria-hidden
-        className={cn(
-          "size-3 shrink-0 transition-transform",
-          props.toggle.expanded && "rotate-180",
-        )}
-      />
+      {props.toggle ? (
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 shrink-0 transition-transform",
+            props.toggle.expanded && "rotate-180",
+          )}
+        />
+      ) : null}
     </>
   );
+  const header = props.toggle ? (
+    <button
+      type="button"
+      onClick={props.toggle.onToggle}
+      aria-expanded={props.toggle.expanded}
+      data-testid={
+        props.marker ? `sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle` : undefined
+      }
+      className={cn(className, "cursor-pointer")}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className={className}>{content}</div>
+  );
+  if (!props.marker) {
+    return <li className={cn("list-none", "mx-0.5 h-8", props.className)}>{header}</li>;
+  }
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
       className={cn("mx-0.5 h-8", props.className)}
     >
-      <button
-        type="button"
-        onClick={props.toggle.onToggle}
-        aria-expanded={props.toggle.expanded}
-        data-testid={`sidebar-${snoozed ? "snoozed" : "settled"}-shelf-toggle`}
-        className={cn(className, "cursor-pointer")}
-      >
-        {content}
-      </button>
+      {header}
     </SortableSidebarMarker>
   );
 }
@@ -956,7 +988,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: {
+export const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
   // Slim rows are either settled (action: un-settle) or merely quiet
@@ -1016,6 +1048,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
    * composer. Absent when the sidebar cannot open server threads.
    */
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
+  /**
+   * Slim rows only. A slim row is normally a quiet thread with no status to
+   * show; the Master workspace lists live threads as slim rows, so it asks
+   * for the status glyph (icon only, labelled for assistive tech).
+   */
+  showStatusIcon?: boolean;
+  /**
+   * Slim rows only. Drops the leading project icon where a surrounding
+   * project header already names the project.
+   */
+  hideProjectIcon?: boolean;
+  /**
+   * Slim rows only. Replaces the lifecycle button in the trailing slot with
+   * a button that opens the row's context menu: on hover, or always on touch.
+   */
+  actionsButton?: "on-hover" | "always" | undefined;
 }) {
   const {
     isRenaming,
@@ -1181,6 +1229,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       }
                     : null;
   const isWokeStatus = topStatus?.icon === "woke";
+  const StatusIcon =
+    topStatus?.icon != null && topStatus.icon !== "woke"
+      ? SIDEBAR_STATUS_ICONS[topStatus.icon]
+      : null;
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
     effectiveEnvMode: thread.worktreePath === null ? "local" : "worktree",
@@ -1245,6 +1297,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     (event: ReactMouseEvent) => {
       event.preventDefault();
       onContextMenu(threadRef, { x: event.clientX, y: event.clientY });
+    },
+    [onContextMenu, threadRef],
+  );
+  const handleActionsClick = useCallback(
+    (event: ReactMouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = event.currentTarget.getBoundingClientRect();
+      onContextMenu(threadRef, { x: rect.left, y: rect.bottom + 4 });
     },
     [onContextMenu, threadRef],
   );
@@ -1534,6 +1595,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       />
     </span>
   ) : null;
+  const slimStatusIcon =
+    props.showStatusIcon && topStatus && StatusIcon ? (
+      <span
+        role="img"
+        aria-label={topStatus.label}
+        data-testid={`sidebar-status-${thread.id}`}
+        className={cn("inline-flex shrink-0 items-center justify-center", topStatus.className)}
+      >
+        <StatusIcon aria-hidden className="size-3.5" />
+      </span>
+    ) : null;
   // Same pen the new-thread draft rows lead with, so both kinds of unsent
   // work read the same way in the list.
   const draftIndicator =
@@ -1583,6 +1655,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : null;
 
   if (variant === "slim") {
+    const slimRowActionClassName =
+      "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100";
     return (
       <li
         data-thread-item
@@ -1613,19 +1687,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           >
             {/* Settled history recedes: dimmed favicon at rest, restored on
               hover so the tail stays scannable when you're hunting. */}
-            <span
-              className={cn(
-                "shrink-0 transition-opacity",
-                (!props.isActive || variantAction === "unsettle") &&
-                  "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
-              )}
-            >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
-            </span>
+            {props.hideProjectIcon ? null : (
+              <span
+                className={cn(
+                  "shrink-0 transition-opacity",
+                  (!props.isActive || variantAction === "unsettle") &&
+                    "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
+                )}
+              >
+                {props.project ? (
+                  <ProjectFavicon project={props.project} className="size-4" />
+                ) : null}
+              </span>
+            )}
             {draftIndicator}
             {title}
             {pinIndicator}
             {terminalStatusIcon}
+            {slimStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1678,7 +1757,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     </span>
                   )}
                 </span>
-                {variantAction === "unsnooze" ? (
+                {props.actionsButton ? (
+                  <button
+                    type="button"
+                    aria-label={`Thread actions for ${thread.title}`}
+                    onClick={handleActionsClick}
+                    className={cn(
+                      slimRowActionClassName,
+                      props.actionsButton === "always" && "pointer-events-auto static opacity-100",
+                    )}
+                  >
+                    <EllipsisIcon className="size-3" />
+                  </button>
+                ) : variantAction === "unsnooze" ? (
                   !props.snoozeSupported ? null : (
                     <button
                       type="button"
@@ -1717,7 +1808,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     aria-label="Settle thread"
                     onClick={handleSettleClick}
                     className={cn(
-                      "pointer-events-none absolute inset-y-0 right-0 inline-flex cursor-pointer items-center gap-1 rounded-md bg-transparent px-2 text-xs text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                      slimRowActionClassName,
                       isWoke && "group-hover/sidebar-row:static",
                     )}
                   >
@@ -1831,18 +1922,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             topStatus.className,
                           )}
                         >
-                          {topStatus.icon === "working" ? (
-                            <CircleDashedIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "input" ? (
-                            <MessageCircleQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "approval" ? (
-                            <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "failed" ? (
-                            <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "monitoring" ? (
-                            <EyeIcon aria-hidden className="size-4 shrink-0" />
-                          ) : topStatus.icon === "done" ? (
-                            <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
+                          {StatusIcon ? (
+                            <StatusIcon aria-hidden className="size-4 shrink-0" />
                           ) : null}
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
