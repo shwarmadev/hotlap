@@ -308,6 +308,49 @@ describe("environment RPC", () => {
     }),
   );
 
+  it.effect("counts the wait for a reconnecting session as request time", () =>
+    Effect.gen(function* () {
+      const observations: string[] = [];
+      const client = {
+        [WS_METHODS.cloudGetRelayClientStatus]: () =>
+          Effect.succeed({ status: "available", version: "2026.6.0" }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        desired: true,
+        phase: "backoff" as const,
+      }));
+
+      const resultFiber = yield* request(WS_METHODS.cloudGetRelayClientStatus, {}).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(
+          EnvironmentRpcRequestObserver,
+          EnvironmentRpcRequestObserver.of({
+            observe: ({ method }) =>
+              Effect.sync(() => {
+                observations.push(`start:${method}`);
+                return Effect.sync(() => {
+                  observations.push(`finish:${method}`);
+                });
+              }),
+          }),
+        ),
+        Effect.forkChild,
+      );
+      for (let i = 0; i < 20; i += 1) yield* Effect.yieldNow;
+      // The slow-request toast starts counting while the request waits.
+      expect(observations).toEqual([`start:${WS_METHODS.cloudGetRelayClientStatus}`]);
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      yield* Fiber.join(resultFiber);
+      expect(observations).toEqual([
+        `start:${WS_METHODS.cloudGetRelayClientStatus}`,
+        `finish:${WS_METHODS.cloudGetRelayClientStatus}`,
+      ]);
+    }),
+  );
+
   it.effect("binds finite streaming commands to one active session", () =>
     Effect.gen(function* () {
       const firstEvents = yield* Queue.unbounded<RelayClientInstallProgressEvent>();
@@ -336,6 +379,68 @@ describe("environment RPC", () => {
 
       expect(yield* Fiber.join(resultFiber)).toEqual([INSTALL_CHECKING, INSTALL_DOWNLOADING]);
     }),
+  );
+
+  it.effect("keeps a durable subscription alive when the server interrupts its stream", () =>
+    Effect.gen(function* () {
+      const subscriptions: string[] = [];
+      const firstClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions.push("first");
+          // The server interrupted the handler: the Exit arrives as data.
+          return Stream.failCause(Cause.interrupt(1));
+        },
+      } as unknown as WsRpcProtocolClient;
+      const secondClient = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions.push("second");
+          return Stream.never;
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+
+      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      yield* SubscriptionRef.set(activeSession, Option.some(session(firstClient)));
+      for (let i = 0; i < 50; i += 1) yield* Effect.yieldNow;
+      expect(subscriptionFiber.pollUnsafe()).toBeUndefined();
+
+      yield* SubscriptionRef.set(activeSession, Option.some(session(secondClient)));
+      for (let i = 0; i < 50; i += 1) yield* Effect.yieldNow;
+      expect(subscriptions).toEqual(["first", "second"]);
+      yield* Fiber.interrupt(subscriptionFiber);
+    }),
+  );
+
+  it.effect("resubscribes on the same session after the server interrupts one stream", () =>
+    Effect.gen(function* () {
+      const subscriptions: string[] = [];
+      const client = {
+        [WS_METHODS.subscribeTerminalEvents]: () => {
+          subscriptions.push("subscribed");
+          return subscriptions.length === 1 ? Stream.failCause(Cause.interrupt(1)) : Stream.never;
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+
+      const subscriptionFiber = yield* subscribe(WS_METHODS.subscribeTerminalEvents, {}).pipe(
+        Stream.runDrain,
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.forkChild,
+      );
+      for (let i = 0; i < 50; i += 1) yield* Effect.yieldNow;
+      expect(subscriptions).toEqual(["subscribed"]);
+
+      yield* TestClock.adjust("3 seconds");
+      for (let i = 0; i < 50; i += 1) yield* Effect.yieldNow;
+      expect(subscriptions).toEqual(["subscribed", "subscribed"]);
+      expect(subscriptionFiber.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(subscriptionFiber);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("switches durable subscriptions when the supervisor replaces the session", () =>

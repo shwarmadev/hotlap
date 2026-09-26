@@ -10,7 +10,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { RpcClientError } from "effect/unstable/rpc";
 
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import { isSessionPending } from "../connection/model.ts";
+import { EnvironmentSupervisor, REQUEST_RECONNECT_WAIT_TIMEOUT } from "../connection/supervisor.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 
@@ -112,20 +113,36 @@ export type EnvironmentRpcStreamFailure<TTag extends EnvironmentStreamRpcTag> =
     ? E
     : never;
 
+/**
+ * Resolves the session a call runs on. While the supervisor is replacing a
+ * lost transport, the call waits for the replacement (up to
+ * REQUEST_RECONNECT_WAIT_TIMEOUT) instead of failing work the user just asked
+ * for; it is written once, on that session. Settled phases (switched off,
+ * offline, blocked, disposed) fail at once because no session is coming.
+ */
 const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
   const supervisor = yield* EnvironmentSupervisor;
-  return yield* SubscriptionRef.get(supervisor.session).pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () =>
-          Effect.fail(
+  const active = yield* SubscriptionRef.get(supervisor.session);
+  if (Option.isSome(active)) {
+    return active.value;
+  }
+  return yield* SubscriptionRef.changes(supervisor.state).pipe(
+    Stream.zipLatest(SubscriptionRef.changes(supervisor.session)),
+    Stream.filter(([state, session]) => Option.isSome(session) || !isSessionPending(state.phase)),
+    Stream.runHead,
+    Effect.timeoutOrElse({
+      duration: REQUEST_RECONNECT_WAIT_TIMEOUT,
+      orElse: () => Effect.succeedNone,
+    }),
+    Effect.flatMap((next) =>
+      Option.isSome(next) && Option.isSome(next.value[1])
+        ? Effect.succeed(next.value[1].value)
+        : Effect.fail(
             new EnvironmentRpcUnavailableError({
               environmentId: supervisor.target.environmentId,
               message: `${supervisor.target.label} is not connected.`,
             }),
           ),
-        onSome: Effect.succeed,
-      }),
     ),
   );
 });
@@ -138,16 +155,20 @@ export const request = Effect.fn("EnvironmentRpc.request")(function* <
     "environment.id": supervisor.target.environmentId,
     "rpc.method": tag,
   });
-  const session = yield* currentSession();
   const observer = yield* EnvironmentRpcRequestObserver;
-  const method = session.client[tag] as (
-    input: EnvironmentRpcInput<TTag>,
-  ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
+  // Observed before resolving the session, so time spent waiting for a
+  // reconnect counts towards the slow-request warning.
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
     method: tag,
   });
-  return yield* method(input).pipe(Effect.ensuring(completeObservation));
+  return yield* Effect.gen(function* () {
+    const session = yield* currentSession();
+    const method = session.client[tag] as (
+      input: EnvironmentRpcInput<TTag>,
+    ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
+    return yield* method(input);
+  }).pipe(Effect.ensuring(completeObservation));
 });
 
 export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
@@ -173,6 +194,13 @@ export function runStream<TTag extends EnvironmentStreamCommandRpcTag>(
     }),
   );
 }
+
+/**
+ * Resubscribe delay after a server interrupt when the caller sets no
+ * retryExpectedFailureAfter (callers such as shell and thread sync pass their
+ * own, e.g. 250 ms). This default matches the supervisor's first retry rung.
+ */
+const SERVER_INTERRUPTED_RESUBSCRIBE_AFTER = "3 seconds";
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
   /** Reports protocol or programming defects without changing their recovery policy. */
@@ -261,6 +289,33 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                       const hasOnlyExpectedFailures =
                         cause.reasons.length > 0 &&
                         cause.reasons.every((reason) => reason._tag === "Fail");
+                      // Interrupting this fiber cannot be caught here, so an
+                      // interrupt-only cause is the server's Exit for the stream
+                      // (e.g. a handler interrupted while it shuts down). The
+                      // socket may still be healthy, so resubscribe on this
+                      // session after a delay; a replaced session switches away.
+                      if (Cause.hasInterruptsOnly(cause)) {
+                        return Stream.fromEffect(
+                          Effect.logWarning(
+                            "The server interrupted a durable RPC subscription; resubscribing.",
+                            {
+                              method: tag,
+                              environmentId: supervisor.target.environmentId,
+                            },
+                          ),
+                        ).pipe(
+                          Stream.drain,
+                          Stream.concat(
+                            Stream.fromEffect(
+                              Effect.sleep(
+                                options?.retryExpectedFailureAfter ??
+                                  SERVER_INTERRUPTED_RESUBSCRIBE_AFTER,
+                              ),
+                            ).pipe(Stream.drain),
+                          ),
+                          Stream.concat(subscribeToSession()),
+                        );
+                      }
                       const isTransportFailure =
                         hasOnlyExpectedFailures &&
                         cause.reasons.every(

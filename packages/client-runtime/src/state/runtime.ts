@@ -7,7 +7,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import type { ConnectionAttemptError } from "../connection/model.ts";
+import { type ConnectionAttemptError, isSessionPending } from "../connection/model.ts";
 import { EnvironmentNotRegisteredError, EnvironmentRegistry } from "../connection/registry.ts";
 import {
   type EnvironmentRpcInput,
@@ -526,29 +526,23 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           return Effect.never;
         }
         const [connectionState, session] = connection;
-        switch (connectionState.phase) {
-          case "connected":
-            return Option.isSome(session)
-              ? runInEnvironment(target.environmentId, options.execute(target.input))
-              : Effect.never;
-          case "connecting":
-          case "backoff":
-            return Effect.never;
-          case "available":
-          case "offline":
-          case "blocked":
-            if (connectionState.lastFailure !== null) {
-              return Effect.fail(connectionState.lastFailure);
-            }
-            return Effect.fail(
-              new EnvironmentRpcUnavailableError({
-                environmentId: target.environmentId,
-                message: `Environment ${target.environmentId} is ${
-                  connectionState.phase === "available" ? "not connected" : connectionState.phase
-                }.`,
-              }),
-            );
+        if (connectionState.phase === "connected" && Option.isSome(session)) {
+          return runInEnvironment(target.environmentId, options.execute(target.input));
         }
+        if (isSessionPending(connectionState.phase)) {
+          return Effect.never;
+        }
+        if (connectionState.lastFailure !== null) {
+          return Effect.fail(connectionState.lastFailure);
+        }
+        return Effect.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId: target.environmentId,
+            message: `Environment ${target.environmentId} is ${
+              connectionState.phase === "available" ? "not connected" : connectionState.phase
+            }.`,
+          }),
+        );
       })
       .pipe(
         Atom.swr({

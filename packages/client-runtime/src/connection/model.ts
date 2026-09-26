@@ -146,6 +146,15 @@ export interface SupervisorConnectionState {
   readonly retryAt: number | null;
 }
 
+/**
+ * Whether a session is on its way: the supervisor is (re)connecting, or it
+ * reports "connected" in the instant before the lease is published or after it
+ * closed. Callers wait in these phases; the others are settled and fail.
+ */
+export function isSessionPending(phase: SupervisorConnectionPhase): boolean {
+  return phase === "connecting" || phase === "backoff" || phase === "connected";
+}
+
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";
 
 export function connectionProjectionPhase(
