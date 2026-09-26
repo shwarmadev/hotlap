@@ -32,6 +32,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
+import { MasterWorkspaceSidebarSlot } from "./master/MasterWorkspaceSidebar";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -312,10 +313,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
               <SidebarChromeHeader isElectron={isElectron} />
               <SettingsSidebarNav pathname={pathname} />
             </>
-          ) : legacySidebarEnabled ? (
-            <LegacyThreadSidebar />
           ) : (
-            <ThreadSidebar />
+            <MasterWorkspaceSidebarSlot
+              fallback={legacySidebarEnabled ? <LegacyThreadSidebar /> : <ThreadSidebar />}
+            />
           )}
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
