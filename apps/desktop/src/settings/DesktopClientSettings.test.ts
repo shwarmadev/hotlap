@@ -56,6 +56,8 @@ const clientSettings: ClientSettings = {
   planModeEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
+  masterStatusBoardEnabled: true,
+  masterWorkspaceEnabled: true,
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
