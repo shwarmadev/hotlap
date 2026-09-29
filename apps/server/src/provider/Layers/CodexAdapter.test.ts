@@ -3156,6 +3156,7 @@ it.effect("managed runtime rotation restarts app-server and resumes the same nat
           runtime.startImpl.mockImplementation(() =>
             Promise.resolve({
               provider: ProviderDriverKind.make("codex"),
+              providerSessionId: runtime.providerSessionId,
               threadId: options.threadId,
               runtimeMode: options.runtimeMode,
               cwd: options.cwd,
