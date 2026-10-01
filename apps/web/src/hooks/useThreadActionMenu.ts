@@ -70,7 +70,7 @@ export function useThreadActionMenu(input: {
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef: defaultThreadRef, projectCwd: defaultProjectCwd, onStartRename } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -124,8 +124,19 @@ export function useThreadActionMenu(input: {
   });
   const copyThreadTranscript = useCopyThreadTranscript();
 
+  // `target` lets a list surface share one menu across its rows.
   const openMenu = useCallback(
-    (position: { x: number; y: number }) => {
+    (
+      position: { x: number; y: number },
+      target?: {
+        readonly threadRef: ScopedThreadRef;
+        readonly projectCwd: string | null;
+        /** Runs after a successful settle or snooze, e.g. to move a list forward. */
+        readonly onParked?: () => void;
+      },
+    ) => {
+      const threadRef = target ? target.threadRef : defaultThreadRef;
+      const projectCwd = target ? target.projectCwd : defaultProjectCwd;
       if (threadRef === null) return;
       void (async () => {
         const api = readLocalApi();
@@ -175,6 +186,9 @@ export function useThreadActionMenu(input: {
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
           }
+          if (result._tag !== "Failure") {
+            target?.onParked?.();
+          }
           return;
         }
         const reportFailure = async (
@@ -185,6 +199,7 @@ export function useThreadActionMenu(input: {
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast(title, squashAtomCommandFailure(result));
           }
+          return result._tag !== "Failure";
         };
         switch (action) {
           case "project-settings": {
@@ -220,7 +235,9 @@ export function useThreadActionMenu(input: {
             return;
           }
           case "settle":
-            await reportFailure("Failed to settle thread", () => settleThread(threadRef));
+            if (await reportFailure("Failed to settle thread", () => settleThread(threadRef))) {
+              target?.onParked?.();
+            }
             return;
           case "unsettle":
             await reportFailure("Failed to un-settle thread", () => unsettleThread(threadRef));
@@ -343,20 +360,20 @@ export function useThreadActionMenu(input: {
       copyPathToClipboard,
       copyThreadIdToClipboard,
       copyThreadTranscript,
+      defaultProjectCwd,
+      defaultThreadRef,
       deleteThread,
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,
       pinThread,
-      projectCwd,
       projectGroupingSettings,
       projects,
       router,
       setThreadAutoSettle,
       settleThread,
       snoozeThread,
-      threadRef,
       timestampFormat,
       unsettleThread,
       unsnoozeThread,
