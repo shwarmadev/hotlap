@@ -34,6 +34,8 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+/** How long a request waits for a reconnect before it fails as unavailable. */
+export const REQUEST_RECONNECT_WAIT_TIMEOUT = "30 seconds";
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -86,16 +88,6 @@ type EstablishmentEvent =
     }
   | { readonly _tag: "Interrupted"; readonly resetRetry: boolean }
   | { readonly _tag: "TimedOut" };
-
-function exitUnlessInterrupted<A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<Exit.Exit<A, E>, never, R> {
-  return Effect.matchCauseEffect(effect, {
-    onFailure: (cause) =>
-      Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Exit.failCause(cause)),
-    onSuccess: (value) => Effect.succeed(Exit.succeed(value)),
-  });
-}
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
@@ -169,8 +161,22 @@ function failureFromExit<A>(
   established: boolean,
   stable: boolean,
 ): AttemptOutcome {
-  if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) {
+  if (Exit.isSuccess(exit)) {
     return { _tag: "Interrupted", established, stable, resetRetry: false };
+  }
+  if (Cause.hasInterruptsOnly(exit.cause)) {
+    return {
+      _tag: "Failure",
+      established,
+      stable,
+      failure: {
+        error: new ConnectionTransientError({
+          reason: "transport",
+          detail: `${target.label} interrupted the connection check.`,
+        }),
+        attemptSpan: Option.none(),
+      },
+    };
   }
   const typedFailure = exit.cause.reasons.find(Cause.isFailReason);
   if (typedFailure) {
@@ -254,9 +260,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     { discard: true },
   );
 
+  // Once disposed, the state stays settled so callers waiting for a session
+  // fail instead of waiting on a supervisor that will never publish one.
+  const disposed = yield* Ref.make(false);
   const setState = Effect.fn("EnvironmentSupervisor.setState")(function* (
     next: SupervisorConnectionState,
   ) {
+    if (yield* Ref.get(disposed)) return;
     yield* SubscriptionRef.set(state, next);
   });
 
@@ -494,9 +504,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   ) {
     yield* SubscriptionRef.set(prepared, Option.none());
     const establishment = yield* Effect.raceAllFirst([
-      exitUnlessInterrupted(
-        establishTracedConnection(attempt, generation, lastFailure, pendingRetry),
-      ).pipe(
+      // Interrupting this fiber cannot be caught here, so an interrupt in an
+      // attempt's exit came from the attempt (e.g. a server that interrupted
+      // a request) and is a failure to retry, never a reason to stop.
+      Effect.exit(establishTracedConnection(attempt, generation, lastFailure, pendingRetry)).pipe(
         Effect.map((exit): EstablishmentEvent => ({
           _tag: "Completed",
           exit,
@@ -592,7 +603,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           attemptSpan: active.attemptSpan,
         })),
       ),
-    ).pipe(exitUnlessInterrupted);
+    ).pipe(Effect.exit);
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {
       return {
@@ -786,7 +797,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     Effect.withSpan("EnvironmentSupervisor.retryNow"),
   );
 
-  yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      yield* Ref.set(disposed, true);
+      yield* Queue.shutdown(signals);
+      yield* clearLease;
+      yield* SubscriptionRef.set(state, availableState(yield* Ref.get(intent), 0));
+    }),
+  );
 
   return EnvironmentSupervisor.of({
     target,
