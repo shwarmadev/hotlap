@@ -22,6 +22,7 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+<<<<<<< HEAD
 describe("ServerSettings custom prompts", () => {
   it("defaults to an empty environment prompt library and accepts ordered entries", () => {
     expect(decodeServerSettings({}).customPrompts).toEqual([]);
@@ -75,6 +76,34 @@ describe("ServerSettings custom prompts", () => {
       }),
     ).toThrow();
   });
+=======
+describe("ServerSettings response streaming", () => {
+  it("defaults to paragraph buffering", () => {
+    expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
+  });
+
+  it.each(["turn", "paragraph"])(
+    "round-trips %s as an environment setting and project override",
+    (responseStreamingMode) => {
+      const input = {
+        responseStreamingMode,
+        projectSettingsOverrides: { project: { responseStreamingMode } },
+      };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
+
+  it.each(["token", "unsupported"])("rejects %s in settings snapshots and writes", (mode) => {
+    for (const input of [
+      { responseStreamingMode: mode },
+      { projectSettingsOverrides: { project: { responseStreamingMode: mode } } },
+    ]) {
+      expect(() => decodeServerSettings(input)).toThrow();
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
+  });
+>>>>>>> 737993303d36e10674c54b95e5bd3826682c99c7
 });
 
 describe("storage cleanup settings", () => {
@@ -450,6 +479,15 @@ describe("ClientSettings load balancing", () => {
     expect(decodeClientSettingsPatch({ loadBalancingEnabled }).loadBalancingEnabled).toBe(
       loadBalancingEnabled,
     );
+  });
+});
+
+describe("ClientSettings composer context strip", () => {
+  it("defaults to draft-only and accepts a persistent strip preference", () => {
+    expect(decodeClientSettings({}).persistComposerContextStrip).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ persistComposerContextStrip: true }).persistComposerContextStrip,
+    ).toBe(true);
   });
 });
 
@@ -975,6 +1013,42 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+describe("ServerSettings Cursor legacy settings", () => {
+  it("preserves V1 Cursor CLI settings when reading and writing shared settings", () => {
+    const decoded = decodeServerSettings({
+      providers: {
+        cursor: {
+          enabled: true,
+          binaryPath: "cursor-agent",
+          apiEndpoint: "http://127.0.0.1:3774",
+        },
+      },
+    });
+
+    expect(decoded.providers.cursor.enabled).toBe(true);
+    expect(encodeServerSettings(decoded).providers?.cursor).toMatchObject({
+      binaryPath: "cursor-agent",
+      apiEndpoint: "http://127.0.0.1:3774",
+    });
+  });
+
+  it("ignores obsolete Cursor CLI settings in patches", () => {
+    const patch = decodeServerSettingsPatch({
+      providers: {
+        cursor: {
+          enabled: true,
+          binaryPath: "cursor-agent",
+          apiEndpoint: "http://127.0.0.1:3774",
+        },
+      },
+    });
+
+    expect(patch.providers?.cursor?.enabled).toBe(true);
+    expect(patch.providers?.cursor).not.toHaveProperty("binaryPath");
+    expect(patch.providers?.cursor).not.toHaveProperty("apiEndpoint");
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it("defaults all style settings for legacy configs", () => {
     const settings = decodeServerSettings({});
@@ -1128,4 +1202,27 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
     decodeDeviceHostSettings({ deviceHosts: [{ ...host, target: "-oProxyCommand=bad" }] }),
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
+});
+
+describe("branch naming settings", () => {
+  it("defaults existing settings to the t3code static prefix", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      branchNamingMode: "static",
+      branchNamePrefix: "t3code",
+      branchNameInstructions: "",
+    });
+  });
+  it.each(["static", "semantic", "custom"])(
+    "round-trips %s and project overrides",
+    (branchNamingMode) => {
+      const naming = {
+        branchNamingMode,
+        branchNamePrefix: "team/",
+        branchNameInstructions: "Include the issue ID.",
+      };
+      const input = { ...naming, projectSettingsOverrides: { project: naming } };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
 });

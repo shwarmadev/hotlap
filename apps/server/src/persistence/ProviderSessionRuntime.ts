@@ -15,7 +15,6 @@ import {
   IsoDateTime,
   MessageId,
   ProviderInstanceId,
-  ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
   TurnId,
@@ -35,6 +34,8 @@ import {
  *
  * @module ProviderSessionRuntimeRepository
  */
+
+const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,

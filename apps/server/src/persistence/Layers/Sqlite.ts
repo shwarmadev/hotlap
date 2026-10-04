@@ -5,8 +5,14 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+<<<<<<< HEAD
 import { runPersistenceMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+=======
+import { runMigrations } from "../Migrations.ts";
+import { initializeV2Database } from "../initializeV2Database.ts";
+import * as ServerConfig from "../../config.ts";
+>>>>>>> 737993303d36e10674c54b95e5bd3826682c99c7
 
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -51,7 +57,8 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 
 export const layerConfig = Layer.unwrap(
   Effect.gen(function* () {
-    const { dbPath } = yield* ServerConfig;
+    const { dbPath } = yield* ServerConfig.ServerConfig;
+    yield* initializeV2Database(dbPath);
     return makeSqlitePersistenceLive(dbPath);
   }),
 );
