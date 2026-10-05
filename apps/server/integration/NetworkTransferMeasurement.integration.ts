@@ -9,8 +9,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
-import * as Socket from "effect/unstable/socket/Socket";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import * as Socket from "effect/socket/Socket";
 
 export class TransferHttpRequestError extends Schema.TaggedError<TransferHttpRequestError>()(
   "TransferHttpRequestError",
@@ -162,17 +162,6 @@ function makeWebSocketTransferRecorder(): WebSocketTransferRecorder {
         orElse: () => Effect.die(new Error("Timed out waiting for the WebSocket to open")),
       }),
     ),
-  };
-}
-
-export function transferDelta(
-  start: WebSocketTransferTotals,
-  end: WebSocketTransferTotals,
-): WebSocketTransferTotals {
-  return {
-    wireBytes: Math.max(0, end.wireBytes - start.wireBytes),
-    decodedBytes: Math.max(0, end.decodedBytes - start.decodedBytes),
-    messages: Math.max(0, end.messages - start.messages),
   };
 }
 

@@ -93,6 +93,8 @@ const RawCheckSchema = Schema.Struct({
   workflowName: Schema.optional(Schema.NullOr(Schema.String)),
   startedAt: Schema.optional(Schema.NullOr(Schema.String)),
   completedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  /** Branch protection requires this check; read by the detail query on github.com only. */
+  isRequired: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 
 const RawListItemSchema = Schema.Struct({
@@ -360,6 +362,7 @@ function toReactions(
 
 const RawCommentSchema = Schema.Struct({
   id: Schema.String,
+  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   body: Schema.optional(Schema.String),
   createdAt: Schema.String,
@@ -370,6 +373,7 @@ const RawCommentSchema = Schema.Struct({
 
 const RawReviewSchema = Schema.Struct({
   id: Schema.String,
+  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
   body: Schema.optional(Schema.String),
   state: Schema.optional(Schema.NullOr(Schema.String)),
@@ -488,6 +492,7 @@ const RawReviewThreadsSchema = Schema.Struct({
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
                   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+                  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -505,6 +510,7 @@ const RawReviewThreadsSchema = Schema.Struct({
                 Schema.Struct({
                   id: Schema.optional(Schema.NullOr(Schema.String)),
                   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+                  lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
                   reactionGroups: RawReactionGroupsSchema,
                 }),
               ),
@@ -706,8 +712,15 @@ export const PULL_REQUEST_LIST_JSON_FIELDS =
 
 export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
 
-/** Pull refs let the comparison share the detail read without first resolving a fork branch. */
-export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
+/**
+ * Pull refs let the comparison share the detail read without first resolving a fork branch.
+ * `isRequired` is asked for on github.com only: an older Enterprise server may not know it, and
+ * an unknown field fails the whole read.
+ */
+export const pullRequestCoreGraphQlQuery = (host: string) => {
+  const required =
+    host.toLowerCase() === "github.com" ? " isRequired(pullRequestNumber: $number)" : "";
+  return `query($owner: String!, $name: String!, $number: Int!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
@@ -727,9 +740,9 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
         nodes { commit { statusCheckRollup { contexts(first: 100) {
           nodes {
             __typename
-            ... on StatusContext { context state targetUrl createdAt description }
+            ... on StatusContext { context state targetUrl createdAt description${required} }
             ... on CheckRun {
-              name status conclusion startedAt completedAt detailsUrl
+              name status conclusion startedAt completedAt detailsUrl${required}
               checkSuite { workflowRun { workflow { name } } }
             }
           }
@@ -739,6 +752,7 @@ export const PULL_REQUEST_CORE_GRAPHQL_QUERY = `query($owner: String!, $name: St
     }
   }
 }`;
+};
 
 export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
@@ -875,7 +889,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
@@ -884,9 +898,9 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
       author { __typename login avatarUrl }
       ${REACTION_GROUPS_FIELDS}
       comments(first: ${GRAPHQL_PAGE_SIZE}) {
-        nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
+        nodes { id lastEditedAt author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} }
       }
-      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
+      reviews(first: ${GRAPHQL_PAGE_SIZE}) { nodes { id lastEditedAt author { __typename login avatarUrl } ${REACTION_GROUPS_FIELDS} } }
       reviewRequests(first: 50) {
         nodes {
           requestedReviewer {
@@ -932,7 +946,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { __typename login avatarUrl } body createdAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -1468,6 +1482,7 @@ function toCheckEntries(
           status: toCheckStatus(check),
           description: trimmed(check.description),
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
+          ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
         },
         workflowName: trimmed(check.workflowName),
         at: realTimestamp(check.completedAt) ?? realTimestamp(check.startedAt),
@@ -1531,6 +1546,7 @@ function toComments(raw: {
     author: toActor(comment.author),
     body: comment.body ?? "",
     createdAt: comment.createdAt,
+    editedAt: comment.lastEditedAt ?? null,
     url: trimmed(comment.url),
     path: null,
     reviewState: null,
@@ -1555,6 +1571,7 @@ function toComments(raw: {
         author: toActor(review.author),
         body: review.body ?? "",
         createdAt: submittedAt,
+        editedAt: review.lastEditedAt ?? null,
         url: trimmed(review.url),
         path: null,
         reviewState,
@@ -1852,6 +1869,8 @@ export function decodePullRequestStatsJson(
  * shape as the search row where the two overlap: the checks arrive as GitHub's one-word rollup
  * rather than the whole check list `gh pr view` hands back, which is what keeps a batch cheap.
  */
+const STACK_MEMBERSHIP_SELECTION = "stack { number size baseRefName } stackEntry { position }";
+
 const PULL_REQUEST_SUMMARY_SELECTION =
   "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
   "updatedAt mergedAt closedAt headRefName baseRefName " +
@@ -1865,6 +1884,7 @@ const PULL_REQUEST_SUMMARY_SELECTION =
  */
 export function buildPullRequestSummariesGraphQlQuery(
   changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
+  includeStacks = false,
 ): string | null {
   if (changeRequests.length === 0) return null;
   const selections: string[] = [];
@@ -1874,7 +1894,7 @@ export function buildPullRequestSummariesGraphQlQuery(
     if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
     if (!Number.isSafeInteger(changeRequest.number) || changeRequest.number <= 0) return null;
     selections.push(
-      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION} } }`,
+      `  s${index}: repository(owner: "${owner}", name: "${name}") { pullRequest(number: ${changeRequest.number}) { ${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""} } }`,
     );
   }
   return `query PullRequestSummaries {\n${selections.join("\n")}\n}`;
@@ -1920,6 +1940,8 @@ export interface GitHubPullRequestSummary {
   readonly reviewDecision: PullRequestReviewDecision | null;
   readonly checksState: PullRequestChecksState | null;
   readonly mergeability: PullRequestMergeability;
+  /** Null when GitHub says the pull request is in no stack; absent when the read did not ask. */
+  readonly stack?: PullRequestStackMembership | null;
 }
 
 /**
@@ -1965,6 +1987,7 @@ export function decodePullRequestSummariesJson(
         }),
       ),
       mergeability: toMergeability(pr.mergeable),
+      ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
     });
   }
   return Result.succeed(summaries);
@@ -2076,10 +2099,12 @@ export interface GitHubReviewThreadComments {
   /** The host's own count of the conversation, which a bounded read can fall short of. */
   readonly commentCount: number;
   readonly truncated: boolean;
+  readonly reviewThreadsTruncated: boolean;
   /** The pull request's own reactions, which sit on its description. */
   readonly reactions: ReadonlyArray<PullRequestReaction>;
   /** Reactions by node id, for the comments and reviews the `gh` JSON read carries no reaction on. */
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtById: ReadonlyMap<string, string>;
   /**
    * Everyone on the review: those still asked and those who have already answered. Whoever has
    * reviewed is no longer an outstanding request, so asking only for requests reports nobody on
@@ -2129,6 +2154,7 @@ export interface GitHubReviewThreadPage {
    * for without any. Only ids with a reaction are here; the rest carry none.
    */
   readonly reactionsById: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+  readonly editedAtById: ReadonlyMap<string, string>;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly avatarsByLogin: ReadonlyMap<string, string>;
   readonly botLogins: ReadonlySet<string>;
@@ -2159,6 +2185,7 @@ export function reviewThreadConversation(
       author: comment.author,
       body: comment.body,
       createdAt: comment.createdAt,
+      editedAt: comment.editedAt ?? null,
       url: comment.url,
       path: thread.path,
       reviewState: null,
@@ -2258,6 +2285,7 @@ export function decodeReviewThreadsJson(
             author: toActor(comment.author),
             body: comment.body ?? "",
             createdAt: comment.createdAt,
+            editedAt: comment.lastEditedAt ?? null,
             url: trimmed(comment.url),
             reactions: toReactions(comment.reactionGroups, viewer),
           })),
@@ -2324,12 +2352,15 @@ export function decodeReviewThreadsJson(
     });
   }
   const reactionsById = new Map<string, ReadonlyArray<PullRequestReaction>>();
+  const editedAtById = new Map<string, string>();
   for (const node of [
     ...(pullRequest.comments?.nodes ?? []),
     ...(pullRequest.reviews?.nodes ?? []),
   ]) {
     const id = trimmed(node.id);
     if (id === null) continue;
+    const editedAt = trimmed(node.lastEditedAt);
+    if (editedAt !== null) editedAtById.set(id, editedAt);
     const reactions = toReactions(node.reactionGroups, viewer);
     if (reactions.length > 0) reactionsById.set(id, reactions);
   }
@@ -2338,6 +2369,7 @@ export function decodeReviewThreadsJson(
     nextCursor: nextCursorOf(threads.pageInfo),
     reactions: toReactions(pullRequest.reactionGroups, viewer),
     reactionsById,
+    editedAtById,
     reviewers: [...reviewers.values()],
     avatarsByLogin,
     botLogins,
@@ -2374,6 +2406,7 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
       author: toActor(comment.author),
       body: comment.body ?? "",
       createdAt: comment.createdAt,
+      editedAt: comment.lastEditedAt ?? null,
       url: trimmed(comment.url),
       reactions: toReactions(comment.reactionGroups, viewer),
     })),

@@ -26,6 +26,7 @@ import {
   decodeWorkflowRunApprovalsJson,
   reviewThreadConversation,
   REVIEW_THREADS_GRAPHQL_QUERY,
+  pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
 
@@ -283,6 +284,25 @@ describe("pull request detail decoding", () => {
       ["test", "failure"],
       ["ci/legacy", "success"],
     ]);
+  });
+
+  it("keeps what branch protection requires, and asks for it on github.com only", () => {
+    const raw = JSON.parse(detailJson) as Record<string, unknown>;
+    const detail = expectSuccess(
+      decodePullRequestDetailJson(
+        JSON.stringify({
+          ...raw,
+          statusCheckRollup: [
+            { __typename: "CheckRun", name: "test", status: "IN_PROGRESS", isRequired: true },
+            { __typename: "StatusContext", context: "bot", state: "PENDING", isRequired: false },
+            { __typename: "StatusContext", context: "legacy", state: "SUCCESS" },
+          ],
+        }),
+      ),
+    );
+    expect(detail.checks.map((check) => check.required)).toEqual([true, false, undefined]);
+    expect(pullRequestCoreGraphQlQuery("github.com")).toContain("isRequired");
+    expect(pullRequestCoreGraphQlQuery("github.example.com")).not.toContain("isRequired");
   });
 
   it("keeps a workflow waiting for approval out of the passing state", () => {
@@ -1085,7 +1105,13 @@ describe("review thread decoding", () => {
             path: "src/a.ts",
             line: 42,
             diffSide: "LEFT",
-            comments: { totalCount: 2, nodes: [comment("c1", "first"), comment("c2", "second")] },
+            comments: {
+              totalCount: 2,
+              nodes: [
+                { ...comment("c1", "first"), lastEditedAt: "2026-07-02T00:00:00Z" },
+                comment("c2", "second"),
+              ],
+            },
           },
         ]),
       ),
@@ -1104,6 +1130,7 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "first",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: "2026-07-02T00:00:00Z",
             url: "https://github.com/acme/web/pull/1#discussion_rc1",
             reactions: [],
           },
@@ -1112,12 +1139,16 @@ describe("review thread decoding", () => {
             author: { login: "bilal", name: null, avatarUrl: "https://avatars/b.png" },
             body: "second",
             createdAt: "2026-07-01T00:00:00Z",
+            editedAt: null,
             url: "https://github.com/acme/web/pull/1#discussion_rc2",
             reactions: [],
           },
         ],
       },
     ]);
+    expect(
+      reviewThreadConversation(reviewThreads.threads.map((entry) => entry.thread))[0]?.editedAt,
+    ).toBe("2026-07-02T00:00:00Z");
   });
 
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {
@@ -1164,6 +1195,27 @@ describe("review thread decoding", () => {
     const threads = decoded.threads.map((entry) => entry.thread);
     expect(reviewThreadConversation(threads).map((comment) => comment.id)).toEqual(["c4"]);
     expect(threads).toHaveLength(1);
+  });
+
+  it("reads edit times for issue comments and reviews without using reaction updates", () => {
+    const editedAt = "2026-10-02T12:06:00Z";
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([], {
+          comments: {
+            nodes: [
+              { id: "edited", lastEditedAt: editedAt },
+              { id: "reaction-only", lastEditedAt: null, updatedAt: editedAt },
+            ],
+          },
+          reviews: { nodes: [{ id: "review", lastEditedAt: editedAt }] },
+        }),
+      ),
+    );
+    expect([...result.editedAtById]).toEqual([
+      ["edited", editedAt],
+      ["review", editedAt],
+    ]);
   });
 
   it("puts an issue comment's and a review's reactions in reactionsById, and the pull request's own in reactions", () => {
@@ -1934,5 +1986,43 @@ describe("batched pull request summaries", () => {
       mergeability: "unknown",
       additions: 0,
     });
+    // The document did not ask about stacks, so the summary does not claim an answer.
+    expect(decoded.success.get(0)).not.toHaveProperty("stack");
+  });
+
+  it("reads stack membership only where the document asked for it", () => {
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true),
+    ).toContain("stack { number size baseRefName } stackEntry { position }");
+    expect(
+      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }]),
+    ).not.toContain("stack {");
+    const pullRequest = (number: number, stack: Record<string, unknown>) => ({
+      pullRequest: {
+        number,
+        title: "Stacked",
+        url: `https://github.com/acme/web/pull/${number}`,
+        headRefName: `feat/${number}`,
+        baseRefName: "main",
+        state: "OPEN",
+        updatedAt: "2026-08-24T00:00:00Z",
+        ...stack,
+      },
+    });
+    const decoded = expectSuccess(
+      decodePullRequestSummariesJson(
+        JSON.stringify({
+          data: {
+            s0: pullRequest(7, { stack: null, stackEntry: null }),
+            s1: pullRequest(8, {
+              stack: { number: 3, size: 2, baseRefName: "main" },
+              stackEntry: { position: 2 },
+            }),
+          },
+        }),
+      ),
+    );
+    expect(decoded.get(0)?.stack).toBeNull();
+    expect(decoded.get(1)?.stack).toEqual({ number: 3, size: 2, base: "main", position: 2 });
   });
 });

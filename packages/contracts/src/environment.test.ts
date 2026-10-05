@@ -14,6 +14,7 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+<<<<<<< HEAD
   it("gates provider account routing under server version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.providerAccountRouting).toBeUndefined();
     expect(
@@ -54,6 +55,27 @@ describe("ExecutionEnvironmentDescriptor", () => {
     expect(current.threadForkModelSelection).toBe(true);
   });
 
+=======
+  it("decodes old, recognized and future manual installation descriptors", () => {
+    expect(decodeDescriptor(descriptor).capabilities.serverInstallation).toBeUndefined();
+    for (const installation of [{ kind: "npx" }, { kind: "npm-global", prefix: "/opt/node" }]) {
+      expect(
+        decodeDescriptor({
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, serverInstallation: installation },
+        }).capabilities.serverInstallation,
+      ).toEqual(installation);
+    }
+    for (const installation of [{ kind: "future-manager" }, { kind: "npm-global" }]) {
+      expect(
+        decodeDescriptor({
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, serverInstallation: installation },
+        }).capabilities.serverInstallation,
+      ).toBeUndefined();
+    }
+  });
+>>>>>>> 25d5c7cacb99bc50056edc0ea8d201eac31cfdf4
   it("requires an advertised required-worktree bootstrap capability", () => {
     expect(decodeDescriptor(descriptor).capabilities.requiredWorktreeBootstrap).toBeUndefined();
     expect(
@@ -100,5 +122,21 @@ describe("ExecutionEnvironmentDescriptor", () => {
         },
       }).capabilities.fileAttachments,
     ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
+  });
+
+  it("treats missing server-resolved command context as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.serverResolvedCommandContext).toBeUndefined();
+  });
+
+  it("preserves advertised server-resolved command context", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          serverResolvedCommandContext: true,
+        },
+      }).capabilities.serverResolvedCommandContext,
+    ).toBe(true);
   });
 });

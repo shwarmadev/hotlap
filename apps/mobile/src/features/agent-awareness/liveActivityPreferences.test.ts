@@ -4,10 +4,10 @@ import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import { MobileStorage } from "../../persistence/mobile-storage";
+import * as MobileStorage from "../../persistence/mobile-storage";
 import {
   CloudEnvironmentLinkError,
   linkEnvironmentToCloudWithPreference,
@@ -50,8 +50,8 @@ const testLayer = Layer.mergeAll(
     HttpClient.make(() => Effect.die("unexpected HTTP request")),
   ),
   Layer.succeed(
-    MobileStorage,
-    MobileStorage.of({
+    MobileStorage.MobileStorage,
+    MobileStorage.MobileStorage.of({
       loadSavedConnections: Effect.succeed([]),
       saveConnection: () => Effect.void,
       clearSavedConnection: () => Effect.void,

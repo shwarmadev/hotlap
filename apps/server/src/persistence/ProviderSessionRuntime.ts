@@ -6,16 +6,20 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
+<<<<<<< HEAD
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import { isSqlError } from "effect/unstable/sql/SqlError";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+=======
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
+>>>>>>> 25d5c7cacb99bc50056edc0ea8d201eac31cfdf4
 
 import {
   AgentSessionImportSource,
   IsoDateTime,
   MessageId,
   ProviderInstanceId,
-  ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
   TurnId,
@@ -35,6 +39,8 @@ import {
  *
  * @module ProviderSessionRuntimeRepository
  */
+
+const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/unstable/http";
+import { HttpClient } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   type EnvironmentCloudLinkStateResult,
@@ -50,9 +50,9 @@ const relayClientRpcError = (message: string) => (cause: unknown) =>
 
 function ensureRelayClientAvailable(
   environmentId: EnvironmentId,
-): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry> {
+): Effect.Effect<void, CloudEnvironmentLinkError, EnvironmentRegistry.EnvironmentRegistry> {
   return Effect.gen(function* () {
-    const registry = yield* EnvironmentRegistry;
+    const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const status = yield* registry
       .run(environmentId, request(WS_METHODS.cloudGetRelayClientStatus, {}))
       .pipe(Effect.mapError(relayClientRpcError("Could not check relay client availability.")));
@@ -199,13 +199,15 @@ export function readPrimaryCloudLinkState(input: {
 export function updatePrimaryCloudPreferences(input: {
   readonly target: CloudLinkTarget;
   readonly publishAgentActivity: boolean;
+  readonly holdWebhooksWhileOffline?: boolean;
 }): Effect.Effect<CloudLinkState, CloudEnvironmentLinkError, HttpClient.HttpClient> {
   return Effect.gen(function* () {
     const client = yield* makeEnvironmentHttpApiClient(input.target.httpBaseUrl);
+    const { target: _target, ...payload } = input;
     return yield* client.connect
       .preferences({
         headers: {},
-        payload: input,
+        payload,
       })
       .pipe(
         Effect.mapError(environmentApiError("Could not update environment cloud preferences.")),
@@ -260,7 +262,7 @@ export function linkPrimaryEnvironmentToCloud(input: {
 }): Effect.Effect<
   void,
   CloudEnvironmentLinkError,
-  EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
+  EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient | ManagedRelay.ManagedRelayClient
 > {
   return Effect.gen(function* () {
     const configuredRelayUrl = relayUrl();

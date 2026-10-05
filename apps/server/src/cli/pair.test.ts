@@ -13,10 +13,14 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
+<<<<<<< HEAD
 import { Command } from "effect/unstable/cli";
 import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+=======
+import { Command } from "effect/cli";
+>>>>>>> 25d5c7cacb99bc50056edc0ea8d201eac31cfdf4
 
-import { cli } from "../bin.ts";
+import { cli } from "../binCli.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,

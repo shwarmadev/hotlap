@@ -6,9 +6,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+<<<<<<< HEAD
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+=======
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+>>>>>>> 25d5c7cacb99bc50056edc0ea8d201eac31cfdf4
 
 import {
   DEVELOPMENT_ICON_OVERRIDES,
