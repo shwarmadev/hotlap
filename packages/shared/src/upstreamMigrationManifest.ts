@@ -58,6 +58,8 @@ export const upstreamMigrationManifest = [
   [56, "RemoveRedundantProjectionIndexes"],
   [57, "ScheduledTaskWebhooks"],
   [58, "WebhookRelayDeliveries"],
+  [59, "McpAppModelContext"],
+  [60, "ThreadSnapshotWindowIndexes"],
 ] as const;
 
 export type UpstreamMigrationManifest = typeof upstreamMigrationManifest;
