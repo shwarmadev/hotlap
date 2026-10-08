@@ -258,6 +258,7 @@ const withHttp = <A>(use: (get: (path: string) => Promise<Response>) => Promise<
                   [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION),
                 },
               }),
+              context,
             ),
           ),
         ),
