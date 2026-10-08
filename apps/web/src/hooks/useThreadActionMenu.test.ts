@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   ThreadId,
   type ContextMenuItem,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -19,6 +20,8 @@ function deferred<T>() {
 
 const state = vi.hoisted(() => ({
   granted: new Set<string>(),
+  supportsTranscript: true,
+  copyTranscript: vi.fn<(threadRef: ScopedThreadRef) => Promise<void>>(),
   effects: [] as string[],
   completed: deferred<void>(),
   show: vi.fn<
@@ -52,6 +55,7 @@ vi.mock("../state/entities", () => ({
   readEnvironmentSupportsSettlement: () => true,
   readEnvironmentSupportsSnooze: () => true,
   readEnvironmentSupportsTitleRegeneration: () => true,
+  readEnvironmentSupportsThreadTranscriptExport: () => state.supportsTranscript,
   readThreadShell: () => ({
     id: "thread",
     environmentId: "secondary",
@@ -110,6 +114,9 @@ vi.mock("../components/Sidebar.snooze", () => ({
 vi.mock("./useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: () => recordEffect("copy") }),
 }));
+vi.mock("./useCopyThreadTranscript", () => ({
+  useCopyThreadTranscript: () => state.copyTranscript,
+}));
 vi.mock("./useHandleNewThread", () => ({
   useNewThreadHandler: () => async () => recordEffect("draft"),
 }));
@@ -161,11 +168,30 @@ const createMenu = () =>
 beforeEach(() => {
   state.granted = new Set(["primary"]);
   state.effects = [];
+  state.supportsTranscript = true;
+  state.copyTranscript.mockReset().mockImplementation(async () => recordEffect("copy-transcript"));
   state.completed = deferred<void>();
   state.show.mockReset().mockResolvedValue(null);
 });
 
 describe("thread menu permissions", () => {
+  it("copies the target transcript without task mutation permission", async () => {
+    state.show.mockResolvedValue("copy-transcript");
+    createMenu().openMenu(position);
+    const copy = state.show.mock.calls[0]![0].find((item) => item.id === "copy");
+    expect(copy?.children?.find((item) => item.id === "copy-transcript")).toBeDefined();
+    await state.completed.promise;
+    expect(state.copyTranscript).toHaveBeenCalledExactlyOnceWith(target);
+    expect(state.effects).toEqual(["copy-transcript"]);
+  });
+
+  it("hides transcript copy when the target environment does not support export", () => {
+    state.supportsTranscript = false;
+    createMenu().openMenu(position);
+    const copy = state.show.mock.calls[0]![0].find((item) => item.id === "copy");
+    expect(copy?.children?.find((item) => item.id === "copy-transcript")).toBeUndefined();
+    expect(state.copyTranscript).not.toHaveBeenCalled();
+  });
   it("disables mutations for a denied secondary environment", () => {
     createMenu().openMenu(position);
     const items = state.show.mock.calls[0]![0];

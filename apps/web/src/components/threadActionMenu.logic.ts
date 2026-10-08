@@ -114,6 +114,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-path",
     "copy-branch",
     "copy-thread-id",
+    "copy-transcript",
   ].includes(action);
 }
 
