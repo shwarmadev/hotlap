@@ -245,7 +245,8 @@ export function presentThreadShell(
       thread.lastErrorClass === "usage_limit" &&
       thread.latestRunId === thread.limitRecovery.runId &&
       (thread.limitRecovery.hotlapCycle === undefined ||
-        thread.limitRecovery.hotlapCycle.deadlineAtMs > Date.now()),
+        thread.limitRecovery.hotlapCycle.deadlineAtMs >
+          DateTime.toEpochMillis(DateTime.nowUnsafe())),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

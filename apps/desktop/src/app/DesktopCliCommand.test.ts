@@ -23,7 +23,7 @@ const environmentFor = (
     homeDirectory: input.home,
     baseDir: input.baseDir,
     stateDir: path.join(input.baseDir, "userdata"),
-    serverRoot: "/opt/T3 Code/resources/app.asar",
+    serverRoot: "/opt/Hotlap/resources/app.asar",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -35,7 +35,7 @@ const commandIn = (
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
-    const baseDir = input.baseDir ?? path.join(input.home, ".t3");
+    const baseDir = input.baseDir ?? path.join(input.home, ".hotlap");
     yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
     const make = DesktopCliCommand.make.pipe(
       Effect.provideService(
@@ -92,96 +92,128 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       const command = yield* commandIn({ home });
-      const link = path.join(home, ".local", "bin", "t3");
+      const link = path.join(home, ".local", "bin", "hotlap");
 
       expect(yield* command.state).toEqual({ supported: true, installedPath: null, onPath: false });
       // Install writes the launcher itself, even when no local backend ever did.
       const installed = yield* command.install;
       expect(installed.installedPath).toBe(link);
-      expect(yield* fs.readLink(link)).toBe(path.join(home, ".t3", "bin", "t3"));
+      expect(yield* fs.readLink(link)).toBe(path.join(home, ".hotlap", "bin", "hotlap"));
       expect((yield* command.install).installedPath).toBe(link);
 
       expect((yield* command.uninstall).installedPath).toBeNull();
       expect(yield* fs.exists(link)).toBe(false);
       // The launcher itself stays for setup commands.
-      expect(yield* fs.exists(path.join(home, ".t3", "bin", "t3"))).toBe(true);
+      expect(yield* fs.exists(path.join(home, ".hotlap", "bin", "hotlap"))).toBe(true);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("never replaces or removes a t3 it did not create", () =>
+  it.effect("keeps T3 Code's profile and command separate from the Hotlap launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const t3Launcher = path.join(home, ".t3", "bin", "t3");
+      const t3Link = path.join(home, ".local", "bin", "t3");
+      const foreignHotlapLink = path.join(home, ".local", "bin", "hotlap");
+      const t3Content = "#!/bin/sh\n# Written by T3 Code: runs the desktop app's bundled t3 CLI.\n";
+      yield* fs.makeDirectory(path.dirname(t3Launcher), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(t3Link), { recursive: true });
+      yield* fs.writeFileString(t3Launcher, t3Content);
+      yield* fs.symlink(t3Launcher, t3Link);
+      yield* fs.symlink(t3Launcher, foreignHotlapLink);
+
+      const command = yield* commandIn({ home });
+      expect((yield* command.state).installedPath).toBeNull();
+      const installed = yield* command.install;
+      expect(installed.installedPath).toBe(path.join(home, "bin", "hotlap"));
+      expect(yield* fs.readLink(installed.installedPath!)).toBe(
+        path.join(home, ".hotlap", "bin", "hotlap"),
+      );
+      yield* command.uninstall;
+      expect(yield* fs.readLink(t3Link)).toBe(t3Launcher);
+      expect(yield* fs.readLink(foreignHotlapLink)).toBe(t3Launcher);
+      expect(yield* fs.readFileString(t3Launcher)).toBe(t3Content);
+      expect(yield* fs.readFileString(path.join(home, ".hotlap", "bin", "hotlap"))).toContain(
+        DesktopCliShim.MARKER,
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("never replaces or removes a hotlap it did not create", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       const command = yield* commandIn({ home });
-      const theirs = path.join(home, ".local", "bin", "t3");
+      const theirs = path.join(home, ".local", "bin", "hotlap");
       yield* fs.makeDirectory(path.dirname(theirs), { recursive: true });
-      yield* fs.writeFileString(theirs, "npm's t3\n");
+      yield* fs.writeFileString(theirs, "npm's hotlap\n");
       // Even a broken link in the next folder is someone else's.
       yield* fs.makeDirectory(path.join(home, "bin"), { recursive: true });
-      yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "t3"));
+      yield* fs.symlink(path.join(home, "gone"), path.join(home, "bin", "hotlap"));
 
       const error = yield* Effect.flip(command.install);
-      expect(error.message).toContain("Another t3 command is already installed");
+      expect(error.message).toContain("Another hotlap command is already installed");
       yield* command.uninstall;
-      expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
-      expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
+      expect(yield* fs.readFileString(theirs)).toBe("npm's hotlap\n");
+      expect(yield* fs.readLink(path.join(home, "bin", "hotlap"))).toBe(path.join(home, "gone"));
     }).pipe(Effect.scoped),
   );
 
-  it.effect("finds and removes a link left by a previous T3 home", () =>
+  it.effect("finds and removes a link left by a previous Hotlap home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
-      const before = yield* commandIn({ home, baseDir: path.join(home, "old-t3") });
+      const before = yield* commandIn({ home, baseDir: path.join(home, "old-hotlap") });
       const link = (yield* before.install).installedPath;
 
-      const after = yield* commandIn({ home, baseDir: path.join(home, "new-t3") });
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-hotlap") });
       expect((yield* after.state).installedPath).toBe(link);
       // Installing again points the link at this home's launcher.
       expect((yield* after.install).installedPath).toBe(link);
-      expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-t3", "bin", "t3"));
+      expect(yield* fs.readLink(link!)).toBe(path.join(home, "new-hotlap", "bin", "hotlap"));
       yield* after.uninstall;
-      expect(yield* fs.exists(path.join(home, ".local", "bin", "t3"))).toBe(false);
-      expect(yield* fs.exists(path.join(home, "bin", "t3"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "hotlap"))).toBe(false);
+      expect(yield* fs.exists(path.join(home, "bin", "hotlap"))).toBe(false);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not read a large binary another t3 links to", () =>
+  it.effect("does not read a large binary another hotlap links to", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       // A big executable that happens to contain the marker text is still not ours.
-      const binary = path.join(home, "native-t3");
+      const binary = path.join(home, "native-hotlap");
       yield* fs.writeFileString(binary, `${"\0".repeat(64 * 1024)}${DesktopCliShim.MARKER}`);
       yield* fs.makeDirectory(path.join(home, ".local", "bin"), { recursive: true });
-      yield* fs.symlink(binary, path.join(home, ".local", "bin", "t3"));
+      yield* fs.symlink(binary, path.join(home, ".local", "bin", "hotlap"));
       const command = yield* commandIn({ home });
       expect((yield* command.state).installedPath).toBeNull();
       yield* command.uninstall;
-      expect(yield* fs.readLink(path.join(home, ".local", "bin", "t3"))).toBe(binary);
+      expect(yield* fs.readLink(path.join(home, ".local", "bin", "hotlap"))).toBe(binary);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports when another t3 earlier on PATH would run instead", () =>
+  it.effect("reports when another hotlap earlier on PATH would run instead", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
-      yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+      yield* fs.writeFileString(path.join(shadow, "hotlap"), "#!/bin/sh\n", { mode: 0o755 });
       const previous = process.env.PATH;
       process.env.PATH = [shadow, path.join(home, ".local", "bin")].join(":");
       yield* Effect.addFinalizer(() => Effect.sync(() => (process.env.PATH = previous)));
 
       const command = yield* commandIn({ home });
       const installed = yield* command.install;
-      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "t3"));
+      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "hotlap"));
       expect(installed.onPath).toBe(false);
-      yield* fs.remove(path.join(shadow, "t3"));
+      yield* fs.remove(path.join(shadow, "hotlap"));
       expect((yield* command.state).onPath).toBe(true);
     }).pipe(Effect.scoped),
   );
@@ -201,8 +233,8 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       registry.failReads = false;
       const launcherDir = DesktopCliShim.launcherPath(
-        environmentFor(yield* Path.Path, { home, baseDir: `${home}/.t3`, platform: "win32" }),
-      ).replace(/[\\/]t3\.cmd$/, "");
+        environmentFor(yield* Path.Path, { home, baseDir: `${home}/.hotlap`, platform: "win32" }),
+      ).replace(/[\\/]hotlap\.cmd$/, "");
       yield* command.install;
       expect(registry.path).toBe(`${userPath};${launcherDir}`);
       yield* command.uninstall;
@@ -217,7 +249,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const home = yield* fs.makeTempDirectoryScoped();
       const launcherDir = path.dirname(
         DesktopCliShim.launcherPath(
-          environmentFor(path, { home, baseDir: path.join(home, ".t3"), platform: "win32" }),
+          environmentFor(path, { home, baseDir: path.join(home, ".hotlap"), platform: "win32" }),
         ),
       );
       const userPath = `C:\\Tools;${launcherDir}`;

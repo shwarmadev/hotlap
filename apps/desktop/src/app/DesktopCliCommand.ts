@@ -12,8 +12,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-// Settings → Install `t3` command, like VS Code's "Install 'code' command".
-// The app's launcher (see DesktopCliShim) lives in the T3 home and is off PATH
+// Settings → Install `hotlap` command, like VS Code's "Install 'code' command".
+// The app's launcher (see DesktopCliShim) lives in the Hotlap home and is off PATH
 // by default. Installing links it into a folder on the user's PATH, or on
 // Windows adds the launcher's folder to the user's PATH. Removing undoes only
 // what installing did: a link that points at one of the app's launchers, or a
@@ -95,13 +95,13 @@ export const make = Effect.gen(function* () {
 
   /**
    * A link to one of the app's launchers, by the marker the launcher carries.
-   * This also finds links made under a previous T3 home, so Remove can clean
+   * This also finds links made under a previous Hotlap home, so Remove can clean
    * them up and Install does not add a second.
    */
   const isOurLink = (link: string) =>
     Effect.gen(function* () {
       yield* fs.readLink(link);
-      // The launcher is a few KB; never read a large binary another `t3` links to.
+      // The launcher is a few KB; never read a large binary another `hotlap` links to.
       const info = yield* fs.stat(link);
       if (info.type !== "File" || Number(info.size) > 16_384) return false;
       const content = yield* fs.readFileString(link);
@@ -137,10 +137,10 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
-  /** The `t3` a new shell runs, by PATH order, or none. */
+  /** The `hotlap` a new shell runs, by PATH order, or none. */
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
-      const candidate = path.join(directory, "t3");
+      const candidate = path.join(directory, "hotlap");
       if (yield* exists(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
@@ -156,7 +156,7 @@ export const make = Effect.gen(function* () {
         : Option.none<string>();
     }
     for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
-      const link = path.join(directory, "t3");
+      const link = path.join(directory, "hotlap");
       if (yield* isOurLink(link)) return Option.some(link);
     }
     return Option.none<string>();
@@ -169,7 +169,7 @@ export const make = Effect.gen(function* () {
     const installed = yield* installedAt;
     if (Option.isNone(installed)) return { supported: true, installedPath: null, onPath: false };
     // On Windows only terminals opened after the change see it. On Unix the
-    // first `t3` on PATH must be ours; a `t3` earlier on PATH would shadow it.
+    // first `hotlap` on PATH must be ours; a `hotlap` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
     const onPath = windows || (Option.isSome(first) && (yield* isOurLink(first.value)));
     return { supported: true, installedPath: installed.value, onPath };
@@ -181,14 +181,14 @@ export const make = Effect.gen(function* () {
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.flatMap(
       Option.match({
-        onNone: () => Effect.fail(fail(`Could not set up the t3 launcher at ${launcher}.`)),
+        onNone: () => Effect.fail(fail(`Could not set up the hotlap launcher at ${launcher}.`)),
         onSome: () => Effect.void,
       }),
     ),
   );
 
   const install: DesktopCliCommand["Service"]["install"] = Effect.gen(function* () {
-    if (!environment.isPackaged) return yield* fail("The t3 command needs an installed app.");
+    if (!environment.isPackaged) return yield* fail("The hotlap command needs an installed app.");
     yield* ensureLauncher;
     if (windows) {
       const entries = pathEntries(yield* readUserPath, ";");
@@ -196,7 +196,7 @@ export const make = Effect.gen(function* () {
         yield* writeUserPath([...entries, binDirectory].join(";"));
         yield* fs
           .writeFileString(ownedPathMarker, `${binDirectory}\n`)
-          .pipe(Effect.mapError(() => fail("Added t3 to your PATH but could not record it.")));
+          .pipe(Effect.mapError(() => fail("Added hotlap to your PATH but could not record it.")));
       }
       return yield* state;
     }
@@ -204,7 +204,7 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous T3 home's launcher: point it at this one instead.
+      // A link to a previous Hotlap home's launcher: point it at this one instead.
       yield* fs
         .remove(existing.value)
         .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
@@ -216,7 +216,7 @@ export const make = Effect.gen(function* () {
       ...candidates.filter((candidate) => onPath.includes(candidate)),
       ...candidates.filter((candidate) => !onPath.includes(candidate)),
     ]) {
-      const link = path.join(directory, "t3");
+      const link = path.join(directory, "hotlap");
       const created = (yield* exists(directory))
         ? yield* writableDirectory(directory)
         : yield* fs.makeDirectory(directory, { recursive: true }).pipe(
@@ -232,7 +232,7 @@ export const make = Effect.gen(function* () {
       if (linked) return yield* state;
     }
     return yield* fail(
-      `Another t3 command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
+      `Another hotlap command is already installed, or no folder on your PATH is writable. Run the launcher directly at ${launcher}.`,
     );
   }).pipe(Effect.withSpan("desktop.cliCommand.install"));
 
@@ -247,7 +247,7 @@ export const make = Effect.gen(function* () {
       return yield* state;
     }
     for (const directory of unixCandidates(environment.homeDirectory, environment.platform)) {
-      const link = path.join(directory, "t3");
+      const link = path.join(directory, "hotlap");
       if (yield* isOurLink(link)) {
         yield* fs.remove(link).pipe(Effect.mapError(() => fail(`Could not remove ${link}.`)));
       }

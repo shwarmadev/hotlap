@@ -11,7 +11,7 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   InvalidScopedProjectRefCollectionKeyError,
@@ -798,4 +798,38 @@ it("does not present stale recovery as Waiting after a successful or newer run",
       limitRecovery: recovery,
     }).usageLimitWaiting,
   ).toBe(false);
+});
+
+it("stops presenting usage-limit Waiting exactly when its recovery budget expires", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(10_000);
+  try {
+    for (const [deadlineAtMs, waiting] of [
+      [10_001, true],
+      [10_000, false],
+      [9_999, false],
+    ] as const) {
+      const runId = RunId.make("budgeted-limit");
+      const shell = presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        status: "failed",
+        lastErrorClass: "usage_limit",
+        latestRunId: runId,
+        limitRecovery: {
+          runId,
+          resetAt: null,
+          autoResume: true,
+          hotlapCycle: {
+            instanceId: v2ThreadShell.providerInstanceId,
+            startedAtMs: 1_000,
+            nextAttemptAtMs: 5_000,
+            deadlineAtMs,
+          },
+        },
+      });
+      expect(shell.usageLimitWaiting).toBe(waiting);
+    }
+  } finally {
+    vi.useRealTimers();
+  }
 });
