@@ -116,14 +116,16 @@ describe("Hotlap persisted usage-limit recovery", () => {
   it("does not wait for weekly resets and schedules the reset grace attempt", () => {
     expect(
       hotlapLimitRecoveryCommand(
-        candidate({ usageLimitResetAt: new Date(now + 13 * 60 * minute).toISOString() }),
+        candidate({
+          usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(now + 13 * 60 * minute)),
+        }),
         true,
         true,
         now,
       ),
     ).toBeNull();
     const thread = armed(
-      candidate({ usageLimitResetAt: new Date(now + 2 * minute).toISOString() }),
+      candidate({ usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(now + 2 * minute)) }),
     );
     expect(thread.limitRecovery?.hotlapCycle?.nextAttemptAtMs).toBe(now + 3 * minute);
   });

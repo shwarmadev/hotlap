@@ -4664,7 +4664,7 @@ it.effect.each([false, true])(
           assert.isDefined(replacementConfig);
           assert.notEqual(replacementConfig!.providerSessionId, previous.config.providerSessionId);
           assert.isDefined(yield* registry.resolve(previousToken));
-          if (fails) yield* Effect.die("Replacement handshake failed");
+          if (fails) return yield* Effect.die("Replacement handshake failed");
         });
         const providerSessionId = yield* ids.allocate.providerSession({
           threadId,

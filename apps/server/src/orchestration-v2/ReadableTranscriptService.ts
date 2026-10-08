@@ -39,7 +39,7 @@ export class ReadableTranscriptService extends Context.Service<
       | ReadableTranscriptLoadError
     >;
   }
->()("hotlap/ReadableTranscriptService") {}
+>()("t3/orchestration-v2/ReadableTranscriptService") {}
 
 export function readableProjectionMessages(
   projection: OrchestrationV2ThreadProjection,

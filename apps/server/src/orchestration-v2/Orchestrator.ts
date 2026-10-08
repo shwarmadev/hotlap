@@ -15,6 +15,7 @@ import {
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   type ChatAttachment,
   CommandId,
+  HotlapUsageLimitCycle,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -400,6 +401,7 @@ function isGoalCommand(message: {
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+const hotlapCyclesEqual = Schema.toEquivalence(Schema.UndefinedOr(HotlapUsageLimitCycle));
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
@@ -2710,7 +2712,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.limitRecovery.runId === thread.limitRecovery.runId &&
         command.limitRecovery.resetAt === thread.limitRecovery.resetAt &&
         (cycle === undefined ||
-          JSON.stringify(cycle) === JSON.stringify(thread.limitRecovery.hotlapCycle));
+          hotlapCyclesEqual(cycle, thread.limitRecovery.hotlapCycle));
       if (
         !cancellingStoredRecovery &&
         command.limitRecovery.snooze === true &&
@@ -2730,7 +2732,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               !(
                 command.limitRecovery.autoResume === false &&
                 (cycle === undefined ||
-                  JSON.stringify(cycle) === JSON.stringify(thread.limitRecovery?.hotlapCycle))
+                  hotlapCyclesEqual(cycle, thread.limitRecovery?.hotlapCycle))
               )) ||
             (command.limitRecovery.autoResume !== false &&
               (cycle.deadlineAtMs <= DateTime.toEpochMillis(now) ||

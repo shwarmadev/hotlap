@@ -37,6 +37,7 @@ const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
   openSession: () => Effect.die("Routing control tests never open a provider process"),
 });
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
+const nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe());
 const providers = instances.map((instanceId, index) =>
   decodeServerProvider({
     instanceId,
@@ -46,17 +47,17 @@ const providers = instances.map((instanceId, index) =>
     version: "1.0.0",
     status: "ready",
     auth: { status: "authenticated" },
-    checkedAt: new Date().toISOString(),
+    checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
     continuation: { groupKey: "codex:home:shared" },
     models: [{ slug: "gpt-5.1-codex", name: "Codex", isCustom: false, capabilities: null }],
     usageLimits: {
-      checkedAt: new Date(Date.now() - 1_000).toISOString(),
+      checkedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - 1_000)),
       windows: [
         {
           id: "secondary",
           kind: "weekly",
           usedPercent: 10 + index,
-          resetsAt: new Date(Date.now() + (index + 1) * 86_400_000).toISOString(),
+          resetsAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + (index + 1) * 86_400_000)),
         },
       ],
     },
