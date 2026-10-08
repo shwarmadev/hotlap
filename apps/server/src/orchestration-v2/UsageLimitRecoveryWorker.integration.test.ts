@@ -220,7 +220,7 @@ it.effect(
       yield* dispatch(yield* planned());
       assert.equal((yield* store.getThread(threadId)).limitRecovery?.autoResume, false);
       assert.equal(yield* planned(), null);
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect("rejects delayed retry after cancellation and foreground queue creation", () =>
@@ -262,7 +262,7 @@ it.effect("rejects delayed retry after cancellation and foreground queue creatio
       limitRecovery: { ...recovery, autoResume: false },
     });
     assert.equal(yield* planned(), null);
-  }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect(
@@ -280,7 +280,7 @@ it.effect(
         ["user-item-1", "error-1"],
       );
       assert.equal(page.totalItems, 2);
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect(
@@ -320,7 +320,7 @@ it.effect(
         creationSource: "web",
       });
       assert.equal((yield* store.getThread(threadId)).limitRecovery, null);
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect.each(["completed", "interrupted", "cancelled", "nonusage"] as const)(
@@ -359,7 +359,7 @@ it.effect.each(["completed", "interrupted", "cancelled", "nonusage"] as const)(
         if ((yield* store.getThread(threadId)).limitRecovery === null) break;
       }
       assert.equal((yield* store.getThread(threadId)).limitRecovery, null);
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect(
@@ -408,7 +408,7 @@ it.effect(
         ),
         [...sql],
       );
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect("a pending provider question blocks a previously planned retry", () =>
@@ -448,7 +448,7 @@ it.effect("a pending provider question blocks a previously planned retry", () =>
     );
     yield* dispatch(retry);
     assert.equal((yield* store.getThreadProjection(threadId)).runs.length, 1);
-  }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect("stops an existing cycle after a provider switch without repeated rejected updates", () =>
@@ -477,7 +477,7 @@ it.effect("stops an existing cycle after a provider switch without repeated reje
       hotlapLimitRecoveryCommand(candidate, true, false, DateTime.toEpochMillis(now)),
     );
     assert.equal((yield* store.getThread(threadId)).limitRecovery?.autoResume, false);
-  }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect("persists the reset grace schedule and its bounded deadline", () =>
@@ -496,7 +496,7 @@ it.effect("persists the reset grace schedule and its bounded deadline", () =>
     yield* TestClock.adjust("30 minutes");
     yield* dispatch(yield* planned());
     assert.equal((yield* store.getThread(threadId)).limitRecovery?.autoResume, false);
-  }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+  }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );
 
 it.effect.each(["assistant", "tool"] as const)(
@@ -584,5 +584,5 @@ it.effect.each(["assistant", "tool"] as const)(
       assert.ok(fresh);
       assert.equal(fresh.startedAtMs, DateTime.toEpochMillis(yield* DateTime.now));
       assert.notEqual(fresh.startedAtMs, originalCycle?.startedAtMs);
-    }).pipe(Effect.provide(layerTest), Effect.provide(TestClock.layer())),
+    }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
 );

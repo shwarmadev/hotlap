@@ -203,7 +203,6 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       const encodedDatabasePath = JSON.stringify(databasePath);
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds the expected home in fake child source.
       const encodedRoot = JSON.stringify(root);
       const childSource = `
 if (process.env.HOTLAP_HOME !== ${encodedRoot} || process.env.T3CODE_HOME !== ${encodedRoot}) throw new Error("wrong child home");
