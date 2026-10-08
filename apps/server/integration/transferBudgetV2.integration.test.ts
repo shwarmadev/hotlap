@@ -93,6 +93,8 @@ const layerManagement = Layer.unwrap(
       getThreadRecords: (id, fields, filter) =>
         projections.getThreadRecords(id, fields, filter).pipe(Effect.orDie),
       getShellSnapshot: (options) => projections.getShellSnapshot(options).pipe(Effect.orDie),
+      readShellSnapshot: (options) =>
+        projections.readShellSnapshot(options).pipe(Effect.map(Effect.orDie), Effect.orDie),
       streamStoredEventsFrom: (input) =>
         sink.stream({ ...input, bounded: true }).pipe(Stream.orDie),
     });
