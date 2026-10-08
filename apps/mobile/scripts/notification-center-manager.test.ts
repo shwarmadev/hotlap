@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Compiles and runs the native dependency regression directly.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -24,9 +25,22 @@ describe.skipIf(NodeOS.platform() !== "darwin")(
         "utf8",
       );
       const manager = NodePath.join(directory, "NotificationCenterManager.swift");
+      const require = NodeModule.createRequire(import.meta.url);
+      const core = NodePath.dirname(
+        NodeModule.createRequire(require.resolve("expo/package.json")).resolve(
+          "expo-modules-core/package.json",
+        ),
+      );
+      const mutex = NodePath.join(core, "ios/Utilities/Mutex.swift");
       NodeFS.writeFileSync(
         manager,
-        source.replace(/^import (ExpoModulesCore|UserNotifications)\n/gm, ""),
+        source
+          .replace(/^import (ExpoModulesCore|UserNotifications)\n/gm, "")
+          // The fixture replaces Objective-C optional OS methods with Swift protocol defaults.
+          .replaceAll(
+            "chainedDelegate?.userNotificationCenter?(",
+            "chainedDelegate?.userNotificationCenter(",
+          ),
       );
       NodeChildProcess.execFileSync(
         "swiftc",
@@ -34,6 +48,7 @@ describe.skipIf(NodeOS.platform() !== "darwin")(
           "-swift-version",
           "5",
           "-sanitize=thread",
+          mutex,
           manager,
           NodeURL.fileURLToPath(
             new URL("./fixtures/NotificationCenterManagerRegression.swift", import.meta.url),

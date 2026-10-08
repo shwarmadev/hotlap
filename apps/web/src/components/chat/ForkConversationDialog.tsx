@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  RunId,
   MessageId,
   ModelSelection,
   ProviderInstanceId,
@@ -26,11 +27,13 @@ export type ForkConversationSnapshot = {
   readonly environmentId: EnvironmentId;
   readonly sourceThreadId: ThreadId;
   readonly sourceMessageId: MessageId;
+  readonly runId?: RunId | null;
   readonly modelSelection: ModelSelection;
 };
 
 export function ForkConversationDialog(props: {
   readonly snapshot: ForkConversationSnapshot | null;
+  readonly supportsModelSelection?: boolean;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   readonly onCancel: () => void;
@@ -42,6 +45,7 @@ export function ForkConversationDialog(props: {
     <OpenForkConversationDialog
       key={`${props.snapshot.environmentId}:${props.snapshot.sourceThreadId}:${props.snapshot.sourceMessageId}`}
       snapshot={props.snapshot}
+      supportsModelSelection={props.supportsModelSelection !== false}
       instanceEntries={props.instanceEntries}
       modelOptionsByInstance={props.modelOptionsByInstance}
       onCancel={props.onCancel}
@@ -52,6 +56,7 @@ export function ForkConversationDialog(props: {
 
 function OpenForkConversationDialog(props: {
   readonly snapshot: ForkConversationSnapshot;
+  readonly supportsModelSelection?: boolean;
   readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   readonly onCancel: () => void;
@@ -74,10 +79,11 @@ function OpenForkConversationDialog(props: {
       })
     : undefined;
   const selectionUnavailable =
-    selectedEntry === undefined ||
-    !isProviderInstancePickerReady(selectedEntry) ||
-    selectedModel === undefined ||
-    selectedModel.isUnavailable === true;
+    props.supportsModelSelection !== false &&
+    (selectedEntry === undefined ||
+      !isProviderInstancePickerReady(selectedEntry) ||
+      selectedModel === undefined ||
+      selectedModel.isUnavailable === true);
   const pickerAriaLabel = modelSelection
     ? `Provider and model: ${selectedEntry?.displayName ?? modelSelection.instanceId}, ${selectedModel?.name ?? modelSelection.model}`
     : "Provider and model";
@@ -119,7 +125,7 @@ function OpenForkConversationDialog(props: {
               lockedProvider={null}
               instanceEntries={props.instanceEntries}
               modelOptionsByInstance={props.modelOptionsByInstance}
-              disabled={pending}
+              disabled={pending || props.supportsModelSelection === false}
               triggerAriaLabel={pickerAriaLabel}
               onInstanceModelChange={(instanceId, model) => {
                 setModelSelection((current) =>

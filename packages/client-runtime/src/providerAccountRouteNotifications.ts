@@ -1,7 +1,11 @@
-import {
-  type OrchestrationThreadActivity,
-  PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS,
-} from "@t3tools/contracts";
+import { PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS } from "@t3tools/contracts";
+
+export interface ProviderAccountRouteActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly summary: string;
+}
 
 export interface ProviderAccountRouteNotification {
   readonly activityId: string;
@@ -13,7 +17,7 @@ export interface ProviderAccountRouteNotification {
 export interface ProviderAccountRouteNotificationTracker {
   readonly observe: (
     threadKey: string | null,
-    activities: ReadonlyArray<OrchestrationThreadActivity>,
+    activities: ReadonlyArray<ProviderAccountRouteActivity>,
     foreground: boolean,
   ) => ReadonlyArray<ProviderAccountRouteNotification>;
 }
@@ -67,7 +71,7 @@ export function providerAccountRoutedDetail(payload: unknown): string | null {
   return initialPlacement || previous === null ? target : `${previous} → ${target}`;
 }
 
-function present(activity: OrchestrationThreadActivity): ProviderAccountRouteNotification | null {
+function present(activity: ProviderAccountRouteActivity): ProviderAccountRouteNotification | null {
   const payload = record(activity.payload);
   if (activity.kind === "provider.account.route.failed") {
     return {
@@ -121,7 +125,7 @@ export function createProviderAccountRouteNotificationTracker(): ProviderAccount
 
   const baseline = (
     threadKey: string | null,
-    activities: ReadonlyArray<OrchestrationThreadActivity>,
+    activities: ReadonlyArray<ProviderAccountRouteActivity>,
   ) => {
     activeThreadKey = threadKey;
     tailActivityId = activities.at(-1)?.id ?? null;

@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useParams } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { useThreadDetail, useThreadStatus } from "../state/entities";
+import { useThreadProjection, useThreadStatus } from "../state/entities";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 const ROUTE_TOAST_VISIBLE_MS = 5_000;
@@ -18,7 +18,7 @@ export function ProviderAccountRouteNotificationCoordinator() {
   const params = useParams({ strict: false });
   const environmentId = typeof params.environmentId === "string" ? params.environmentId : null;
   const threadId = typeof params.threadId === "string" ? params.threadId : null;
-  const thread = useThreadDetail(
+  const thread = useThreadProjection(
     environmentId === null || threadId === null
       ? null
       : {
@@ -40,7 +40,19 @@ export function ProviderAccountRouteNotificationCoordinator() {
   );
   const threadKey =
     environmentId === null || threadId === null ? null : `${environmentId}:${threadId}`;
-  const activities = thread?.activities ?? EMPTY_ACTIVITIES;
+  const activities =
+    thread?.projection.turnItems.flatMap((item) =>
+      item.type === "system_notice" && item.hotlapActivity
+        ? [
+            {
+              id: item.id,
+              summary: item.message,
+              kind: item.hotlapActivity.kind,
+              payload: item.hotlapActivity.payload,
+            },
+          ]
+        : [],
+    ) ?? EMPTY_ACTIVITIES;
   const detailResolved = thread !== null && threadStatus === "live";
 
   useEffect(() => {

@@ -1,9 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import * as Migrator from "effect/unstable/sql/Migrator";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import * as Migrator from "effect/sql/Migrator";
+import * as SqlClient from "effect/sql/SqlClient";
+import type { SqlError } from "effect/sql/SqlError";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import {
@@ -228,6 +228,28 @@ it.effect("rejects a legacy row when the fork columns are missing", () =>
         SELECT name FROM effect_sql_migrations WHERE migration_id = 52
       `;
       assert.deepEqual(shared52, [{ name: "ProjectionThreadForks" }]);
+    }),
+  ),
+);
+
+it.effect("rejects a site-local migration 41 without modifying the copied V1 ledger", () =>
+  withDatabase(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 40 });
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (41, 'ThreadSummaryTimeline')`;
+      const error = yield* expectLedgerFailure(runPersistenceMigrations());
+      assert.equal(error?.reason, "name-mismatch");
+      assert.deepEqual(
+        yield* sql<{
+          readonly name: string;
+        }>`SELECT name FROM effect_sql_migrations WHERE migration_id = 41`,
+        [{ name: "ThreadSummaryTimeline" }],
+      );
+      assert.deepEqual(
+        yield* sql<{ readonly name: string }>`PRAGMA table_info(hotlap_sql_migrations)`,
+        [],
+      );
     }),
   ),
 );

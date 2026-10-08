@@ -18,6 +18,7 @@ const sessionConfig = (
   providerSessionId,
   providerInstanceId: ProviderInstanceId.make(providerInstanceId),
   endpoint: "http://127.0.0.1:43123/mcp",
+  browserToolsAvailable: false,
   authorizationHeader: `Bearer ${providerSessionId}`,
   capabilities: new Set(["pull-requests"]),
 });

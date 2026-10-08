@@ -1,11 +1,11 @@
 import { isForkProviderSelectionUnlocked } from "@t3tools/client-runtime/state/threads";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 import type { ProviderGroup } from "../../lib/modelOptions";
 
 type ThreadProviderSelectionState = Pick<
-  OrchestrationThreadShell,
-  "forkedFrom" | "latestTurn" | "latestUserMessageAt" | "modelSelection" | "session"
+  EnvironmentThreadShell,
+  "forkedFrom" | "latestRun" | "latestUserMessageAt" | "modelSelection" | "runtime"
 >;
 
 export function resolveThreadProviderGroups(

@@ -2,7 +2,7 @@ import {
   createProviderAccountRouteNotificationTracker,
   type ProviderAccountRouteNotification,
 } from "@t3tools/client-runtime/provider-account-route-notifications";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { ProviderAccountRouteActivity } from "@t3tools/client-runtime/provider-account-route-notifications";
 import * as Option from "effect/Option";
 import { useCallback, useEffect, useState } from "react";
 import { AppState, Pressable, View } from "react-native";
@@ -14,7 +14,7 @@ import { useEnvironmentThread } from "../../state/threads";
 import { AppText as Text } from "../../components/AppText";
 
 const ROUTE_BANNER_VISIBLE_MS = 5_000;
-const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = Object.freeze([]);
+const EMPTY_ACTIVITIES: ReadonlyArray<ProviderAccountRouteActivity> = Object.freeze([]);
 
 export function ProviderAccountRouteBanner(props: {
   readonly notification: ProviderAccountRouteNotification;
@@ -106,8 +106,20 @@ export function ProviderAccountRouteNotificationCoordinator(props: { readonly pa
   const [pending, setPending] = useState<ReadonlyArray<ProviderAccountRouteNotification>>([]);
   const threadKey =
     target === null ? null : `${String(target.environmentId)}:${String(target.threadId)}`;
-  const activities = thread?.activities ?? EMPTY_ACTIVITIES;
-  const resolvedThreadId = thread?.id ?? null;
+  const activities =
+    thread?.turnItems.flatMap((item) =>
+      item.type === "system_notice" && item.hotlapActivity
+        ? [
+            {
+              id: item.id,
+              summary: item.message,
+              kind: item.hotlapActivity.kind,
+              payload: item.hotlapActivity.payload,
+            },
+          ]
+        : [],
+    ) ?? EMPTY_ACTIVITIES;
+  const resolvedThreadId = thread?.thread.id ?? null;
   const detailResolved = threadState.status === "live" && resolvedThreadId === target?.threadId;
 
   useEffect(() => {

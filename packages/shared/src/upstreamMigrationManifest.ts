@@ -54,6 +54,10 @@ export const upstreamMigrationManifest = [
   [52, "ProjectionThreadTitleState"],
   [53, "PullRequestFilesViewed"],
   [54, "ProjectionThreadsAutoSettleDisabledAt"],
+  [55, "OrchestrationV2"],
+  [56, "RemoveRedundantProjectionIndexes"],
+  [57, "ScheduledTaskWebhooks"],
+  [58, "WebhookRelayDeliveries"],
 ] as const;
 
 export type UpstreamMigrationManifest = typeof upstreamMigrationManifest;

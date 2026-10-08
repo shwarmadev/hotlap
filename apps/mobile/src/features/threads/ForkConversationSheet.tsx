@@ -45,6 +45,7 @@ function modelKey(selection: ModelSelection): string {
 }
 
 export function ForkConversationSheet(props: {
+  readonly supportsModelSelection?: boolean;
   readonly state: ForkModelPickerState;
   readonly serverConfig: ServerConfig;
   readonly options: ReadonlyArray<ModelOption>;
@@ -122,7 +123,9 @@ export function ForkConversationSheet(props: {
     ? resolveProviderInstanceDisplayName(selectedProvider)
     : (selectedOption?.providerLabel ?? String(props.state.selectedModel.instanceId));
   const selectedModelName = selectedOption?.label ?? props.state.selectedModel.model;
-  const selectionUnavailable = selectedOption === null || selectedOption.isUnavailable === true;
+  const selectionUnavailable =
+    props.supportsModelSelection !== false &&
+    (selectedOption === null || selectedOption.isUnavailable === true);
   const submitting = props.state.status === "submitting";
 
   return (
@@ -169,7 +172,7 @@ export function ForkConversationSheet(props: {
                 accessibilityRole="button"
                 accessibilityLabel={`Provider and model: ${selectedProviderName}, ${selectedModelName}`}
                 accessibilityState={{ expanded: catalogOpen }}
-                disabled={submitting}
+                disabled={submitting || props.supportsModelSelection === false}
                 className="min-h-14 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 active:bg-subtle"
                 onPress={() => setCatalogOpen((open) => !open)}
               >

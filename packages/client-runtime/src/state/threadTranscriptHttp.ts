@@ -5,13 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient } from "effect/unstable/http";
-import { Atom } from "effect/unstable/reactivity";
+import { HttpClient } from "effect/http";
+import { Atom } from "effect/reactivity";
 
 import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
-import { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
@@ -97,7 +97,7 @@ export function createThreadTranscriptCommand<R, E>(
     },
     execute: (input: { readonly threadId: ThreadId }) =>
       Effect.gen(function* () {
-        const supervisor = yield* EnvironmentSupervisor;
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
         const loader = yield* ThreadTranscriptLoader;
         const prepared = yield* SubscriptionRef.get(supervisor.prepared);
         if (Option.isNone(prepared)) {

@@ -1,10 +1,11 @@
-import { EventId, type OrchestrationThreadActivity } from "@t3tools/contracts";
+import { EventId } from "@t3tools/contracts";
+import type { ProviderAccountRouteActivity } from "@t3tools/client-runtime/provider-account-route-notifications";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
-  activities: [] as OrchestrationThreadActivity[],
+  activities: [] as ProviderAccountRouteActivity[],
   add: vi.fn(),
   visible: true,
   focused: true,
@@ -31,7 +32,16 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => ({ environmentId: "env-1", threadId: "thread-1" }),
 }));
 vi.mock("../state/entities", () => ({
-  useThreadDetail: () => ({ activities: state.activities }),
+  useThreadProjection: () => ({
+    projection: {
+      turnItems: state.activities.map((activity) => ({
+        id: activity.id,
+        type: "system_notice",
+        message: activity.summary,
+        hotlapActivity: { kind: activity.kind, payload: activity.payload },
+      })),
+    },
+  }),
   useThreadStatus: () => state.status,
 }));
 vi.mock("./ui/toast", () => ({
@@ -41,10 +51,9 @@ vi.mock("./ui/toast", () => ({
 
 import { ProviderAccountRouteNotificationCoordinator } from "./ProviderAccountRouteNotificationCoordinator";
 
-function routed(id: string): OrchestrationThreadActivity {
+function routed(id: string): ProviderAccountRouteActivity {
   return {
     id: EventId.make(id),
-    tone: "info",
     kind: "provider.account.routed",
     summary: "Switched provider account",
     payload: {
@@ -52,8 +61,6 @@ function routed(id: string): OrchestrationThreadActivity {
       previousProviderInstanceLabel: "Personal",
       providerInstanceLabel: "Work",
     },
-    turnId: null,
-    createdAt: "2026-09-16T00:00:00.000Z",
   };
 }
 

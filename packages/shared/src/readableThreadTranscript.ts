@@ -1,5 +1,6 @@
 import type { ComposerContextKind, MessageId } from "@t3tools/contracts";
 
+import { isHotlapUsageLimitContinuationMessageId } from "./orchestrationV2Timeline.ts";
 import { assistantCitationsToPlainText } from "./assistantCitations.ts";
 import {
   collectComposerContextReferences,
@@ -78,6 +79,8 @@ function readableText(message: ReadableThreadMessageSource): {
 function projectMessage(message: ReadableThreadMessageSource): ReadableThreadMessage | null {
   // Only chat turns are readable; system setup and reasoning traces stay out.
   if (message.role === "system" || message.role === "reasoning") return null;
+
+  if (message.role === "user" && isHotlapUsageLimitContinuationMessageId(message.id)) return null;
 
   const readable = readableText(message);
   const parts: string[] = [];

@@ -17,8 +17,8 @@ import {
 import { findWindowsShim, repointLauncher, resolveLauncherPath, runUpdate } from "./update.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { HttpClient } from "effect/unstable/http";
-import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import { HttpClient } from "effect/http";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("prefers the installer custom bin while retaining its legacy alias", () =>

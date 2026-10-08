@@ -2,8 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -47,7 +47,10 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
     expect(token.length).toBeGreaterThan(20);
 
     const resolved = yield* registry.resolve(token);
-    expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.thread.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(
+      new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+    );
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -73,13 +76,19 @@ it.effect("keeps the previous credential valid until its replacement activates",
     const previousToken = previous.config.authorizationHeader.replace(/^Bearer\s+/, "");
     const replacementToken = replacement.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
-    expect((yield* registry.resolve(previousToken))?.providerInstanceId).toBe("codex-primary");
-    expect((yield* registry.resolve(replacementToken))?.providerInstanceId).toBe("codex-secondary");
+    expect((yield* registry.resolve(previousToken))?.thread.providerInstanceId).toBe(
+      "codex-primary",
+    );
+    expect((yield* registry.resolve(replacementToken))?.thread.providerInstanceId).toBe(
+      "codex-secondary",
+    );
 
     yield* replacement.activate;
 
     expect(yield* registry.resolve(previousToken)).toBeUndefined();
-    expect((yield* registry.resolve(replacementToken))?.providerInstanceId).toBe("codex-secondary");
+    expect((yield* registry.resolve(replacementToken))?.thread.providerInstanceId).toBe(
+      "codex-secondary",
+    );
   }),
 );
 
@@ -102,7 +111,9 @@ it.effect("revokes a failed replacement without invalidating the previous creden
 
     yield* replacement.revoke;
 
-    expect((yield* registry.resolve(previousToken))?.providerInstanceId).toBe("codex-primary");
+    expect((yield* registry.resolve(previousToken))?.thread.providerInstanceId).toBe(
+      "codex-primary",
+    );
     expect(yield* registry.resolve(replacementToken)).toBeUndefined();
   }),
 );
@@ -131,7 +142,9 @@ it.effect("does not let an obsolete staged credential revoke a newer replacement
     yield* latest.activate;
     yield* obsolete.activate;
 
-    expect((yield* registry.resolve(latestToken))?.providerInstanceId).toBe("codex-tertiary");
+    expect((yield* registry.resolve(latestToken))?.thread.providerInstanceId).toBe(
+      "codex-tertiary",
+    );
   }),
 );
 
@@ -158,9 +171,23 @@ it.effect("always grants pull-requests and gates browser and device access indep
         .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
         .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
-    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
-    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
+    expect(yield* capabilitiesOf(withPreview)).toEqual([
+      "orchestration",
+      "preview",
+      "pull-requests",
+      "worktree",
+    ]);
+    expect(yield* capabilitiesOf(withoutPreview)).toEqual([
+      "orchestration",
+      "pull-requests",
+      "worktree",
+    ]);
+    expect(yield* capabilitiesOf(withDevice)).toEqual([
+      "device",
+      "orchestration",
+      "pull-requests",
+      "worktree",
+    ]);
   }),
 );
 
@@ -220,7 +247,7 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
       yield* registry.touch(threadId);
     }
 
-    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+    expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
   }),
 );
 

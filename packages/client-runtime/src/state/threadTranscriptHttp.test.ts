@@ -6,7 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -16,7 +16,7 @@ import {
 } from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import { layerRemoteHttpClient } from "../rpc/http.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
   createThreadTranscriptCommand,
@@ -63,7 +63,7 @@ describe("fetchEnvironmentThreadTranscript", () => {
         prepared: PREPARED,
         threadId: THREAD_ID,
         signer: Option.none(),
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)));
+      }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)));
 
       expect(result).toEqual({
         threadId: THREAD_ID,
@@ -100,7 +100,7 @@ describe("fetchEnvironmentThreadTranscript", () => {
         prepared: PREPARED,
         threadId: THREAD_ID,
         signer: Option.none(),
-      }).pipe(Effect.provide(remoteHttpClientLayer(fetchFn)), Effect.flip);
+      }).pipe(Effect.provide(layerRemoteHttpClient(fetchFn)), Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "EnvironmentPayloadTooLargeError",

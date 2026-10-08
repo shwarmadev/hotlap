@@ -1,25 +1,30 @@
 import {
   ComposerContextId,
   MessageId,
-  TurnId,
-  type OrchestrationMessage,
+  type ChatAttachment,
+  type OrchestrationMessageContext,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  projectReadableThreadMessages,
+  type ReadableThreadMessageSource,
   ReadableTranscriptMessageNotFoundError,
   buildForkProviderInput,
   serializeReadableThreadTranscript,
   selectBoundedForkHistory,
 } from "./readableThreadTranscript.ts";
 
+type TranscriptMessage = Omit<ReadableThreadMessageSource, "attachments" | "context"> & {
+  readonly attachments?: ReadonlyArray<ChatAttachment>;
+  readonly context?: OrchestrationMessageContext;
+};
+
 const message = (
-  input: Partial<OrchestrationMessage> & Pick<OrchestrationMessage, "id" | "role" | "text">,
-): OrchestrationMessage => ({
-  turnId: TurnId.make("turn-1"),
+  input: Partial<TranscriptMessage> & Pick<TranscriptMessage, "id" | "role" | "text">,
+): TranscriptMessage => ({
   streaming: false,
   createdAt: "2026-09-12T00:00:00.000Z",
-  updatedAt: "2026-09-12T00:00:00.000Z",
   ...input,
 });
 
@@ -372,5 +377,31 @@ describe("serializeReadableThreadTranscript", () => {
         { throughMessageId: MessageId.make("missing") },
       ),
     ).toThrow(ReadableTranscriptMessageNotFoundError);
+  });
+});
+
+describe("synthetic usage-limit continuations", () => {
+  it("excludes server retry prompts from transcript export and portable fork history", () => {
+    const messages = [
+      message({ id: MessageId.make("real-request"), role: "user", text: "Fix the bug" }),
+      message({
+        id: MessageId.make("hotlap-limit-resume:thread:retry"),
+        role: "user",
+        text: "Continue where you left off.",
+      }),
+      message({ id: MessageId.make("retry-output"), role: "assistant", text: "Bug fixed" }),
+      message({
+        id: MessageId.make("manual-continue"),
+        role: "user",
+        text: "Continue where you left off.",
+      }),
+    ];
+    const transcript = serializeReadableThreadTranscript(messages);
+    expect(transcript.messageCount).toBe(3);
+    expect(transcript.markdown.match(/Continue where you left off\./g)).toHaveLength(1);
+    const history = projectReadableThreadMessages(messages, {
+      throughMessageId: MessageId.make("retry-output"),
+    });
+    expect(history.map((message) => message.text)).toEqual(["Fix the bug", "Bug fixed"]);
   });
 });

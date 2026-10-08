@@ -1,11 +1,8 @@
-import {
-  EventId,
-  type OrchestrationThreadActivity,
-  PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS,
-} from "@t3tools/contracts";
+import { EventId, PROVIDER_ACCOUNT_ROUTE_FAILURE_DETAILS } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type ProviderAccountRouteActivity,
   createProviderAccountRouteNotificationTracker,
   providerAccountRouteFailureDescription,
   providerAccountRoutedDetail,
@@ -16,15 +13,12 @@ function activity(
   kind: string,
   payload: unknown,
   summary = "Switched provider account",
-): OrchestrationThreadActivity {
+): ProviderAccountRouteActivity {
   return {
     id: EventId.make(id),
-    tone: kind.endsWith("failed") ? "error" : "info",
     kind,
     summary,
     payload,
-    turnId: null,
-    createdAt: "2026-09-16T00:00:00.000Z",
   };
 }
 
