@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - "sync-candidate/**"
 
 permissions:
   contents: read
