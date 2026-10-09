@@ -2734,8 +2734,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         thread.limitRecovery != null &&
         command.limitRecovery.runId === thread.limitRecovery.runId &&
         command.limitRecovery.resetAt === thread.limitRecovery.resetAt &&
-        (cycle === undefined ||
-          hotlapCyclesEqual(cycle, thread.limitRecovery.hotlapCycle));
+        (cycle === undefined || hotlapCyclesEqual(cycle, thread.limitRecovery.hotlapCycle));
       if (
         !cancellingStoredRecovery &&
         command.limitRecovery.snooze === true &&
@@ -2754,8 +2753,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : (cycle.instanceId !== thread.providerInstanceId &&
               !(
                 command.limitRecovery.autoResume === false &&
-                (cycle === undefined ||
-                  hotlapCyclesEqual(cycle, thread.limitRecovery?.hotlapCycle))
+                (cycle === undefined || hotlapCyclesEqual(cycle, thread.limitRecovery?.hotlapCycle))
               )) ||
             (command.limitRecovery.autoResume !== false &&
               (cycle.deadlineAtMs <= DateTime.toEpochMillis(now) ||

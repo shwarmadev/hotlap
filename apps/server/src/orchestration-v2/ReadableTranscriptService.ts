@@ -41,7 +41,7 @@ export class ReadableTranscriptService extends Context.Service<
   }
 >()("t3/orchestration-v2/ReadableTranscriptService") {}
 
-export function readableProjectionMessages(
+function readableProjectionMessages(
   projection: OrchestrationV2ThreadProjection,
 ): ReadonlyArray<ReadableThreadMessageSource> {
   if (projection.visibleTurnItems.length === 0)

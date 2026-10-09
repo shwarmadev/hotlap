@@ -1113,4 +1113,3 @@ export const unlinkThreadPullRequest = Effect.fn("EnvironmentCommands.unlinkThre
 );
 
 export type ForkThreadInput = ForkThreadFromRunInput;
-export const forkThread = forkThreadFromRun;

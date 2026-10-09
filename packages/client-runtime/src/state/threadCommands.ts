@@ -58,7 +58,6 @@ import {
   archiveThread,
   cancelQueuedRun,
   createThread,
-  forkThread,
   deleteThread,
   editQueuedRun,
   interruptThreadTurn,
@@ -160,7 +159,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     }),
     fork: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:fork",
-      execute: (input: ForkThreadInput) => forkThread(input),
+      execute: (input: ForkThreadInput) => forkThreadFromRun(input),
       scheduler,
     }),
     delete: createEnvironmentCommand(runtime, {

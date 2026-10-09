@@ -29,17 +29,6 @@ export function isImportedAgentSessionMessageId(messageId: string): boolean {
   return messageId.startsWith("import:");
 }
 
-export const FORK_HISTORY_MESSAGE_ID_PREFIX = "fork-history:";
-
-function isForkHistoryMessageId(messageId: string): boolean {
-  return messageId.startsWith(FORK_HISTORY_MESSAGE_ID_PREFIX);
-}
-
-/** Read-only transcript rows that are context, not turns created in this thread. */
-export function isReadOnlyHistoryMessageId(messageId: string): boolean {
-  return isImportedAgentSessionMessageId(messageId) || isForkHistoryMessageId(messageId);
-}
-
 /**
  * Empty for now. Kept as a struct so future scan options (source filters,
  * explicit roots) can be added without a new method.

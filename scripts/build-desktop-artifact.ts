@@ -3711,8 +3711,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     t3codeCommitHash: commitHash,
     private: true,
     packageManager: rootPackageJson.packageManager,
-    description:
-      "Hotlap desktop build",
+    description: "Hotlap desktop build",
     license: "MIT",
     // Required by the .deb control file.
     homepage: "https://github.com/shwarmadev/hotlap",
