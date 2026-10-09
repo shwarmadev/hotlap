@@ -216,10 +216,6 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existing)) {
       const target = yield* fs.readLink(existing.value).pipe(Effect.option);
       if (Option.getOrUndefined(target) === launcher) return yield* state;
-      // A link to a previous Hotlap home's launcher: point it at this one instead.
-      yield* fs
-        .remove(existing.value)
-        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     // A link behind another `hotlap` never runs, so installing one would only hide the problem.
     const shadowedBy = yield* foreignFirstOnPath;
@@ -227,6 +223,12 @@ export const make = Effect.gen(function* () {
       return yield* fail(
         `Another hotlap at ${shadowedBy.value} runs first in a new terminal. Remove it, or run the launcher directly at ${launcher}.`,
       );
+    }
+    if (Option.isSome(existing)) {
+      // Preserve the previous launcher until shadow validation has succeeded.
+      yield* fs
+        .remove(existing.value)
+        .pipe(Effect.mapError(() => fail(`Could not replace ${existing.value}.`)));
     }
     const onPath = pathEntries(process.env.PATH, ":");
     const candidates = unixCandidates(environment.homeDirectory, environment.platform);

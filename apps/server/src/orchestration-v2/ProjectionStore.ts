@@ -39,7 +39,6 @@ import type {
   RunAttemptId,
 } from "@t3tools/contracts";
 import {
-  MessageId,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -553,7 +552,14 @@ function needsRecovery(
         )
       );
     case "provider-account-routing":
-      return projection.thread.archivedAt === null && projection.runs.at(-1)?.status === "failed" && projection.runs.at(-1)?.providerAccountRouting !== undefined && !projection.runs.some((run) => ["preparing", "queued", "starting", "running", "waiting"].includes(run.status));
+      return (
+        projection.thread.archivedAt === null &&
+        projection.runs.at(-1)?.status === "failed" &&
+        projection.runs.at(-1)?.providerAccountRouting !== undefined &&
+        !projection.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        )
+      );
     case "delegated-completions":
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "subagent-results": {
@@ -700,7 +706,18 @@ export function applyToProjection(
 
   switch (event.type) {
     case "thread.imported-history-reconciled":
-      return withLocalVisibleTurnItems({ ...base, thread: event.payload.thread, messages: [...base.messages.filter((message) => message.runId !== null), ...event.payload.messages], turnItems: [...base.turnItems.filter((item) => item.runId !== null), ...event.payload.turnItems] });
+      return withLocalVisibleTurnItems({
+        ...base,
+        thread: event.payload.thread,
+        messages: [
+          ...base.messages.filter((message) => message.runId !== null),
+          ...event.payload.messages,
+        ],
+        turnItems: [
+          ...base.turnItems.filter((item) => item.runId !== null),
+          ...event.payload.turnItems,
+        ],
+      });
     case "thread.created":
     case "thread.archived":
     case "thread.unarchived":
@@ -1338,9 +1355,23 @@ function buildVisibleTurnItems(input: {
     sourceRunId: forkedFrom.runId,
   });
   if (forkedFrom.sourceMessageId !== undefined) {
-    const start = inherited.findIndex(({ item }) => (item.type === "user_message" || item.type === "assistant_message") && item.messageId === forkedFrom.sourceStartMessageId);
-    const end = inherited.findIndex(({ item }) => item.type === "assistant_message" && item.messageId === forkedFrom.sourceMessageId);
-    inherited = start < 0 || end < start ? [] : inherited.slice(start, end + 1).filter(({ item }) => item.type === "user_message" || item.type === "assistant_message");
+    const start = inherited.findIndex(
+      ({ item }) =>
+        (item.type === "user_message" || item.type === "assistant_message") &&
+        item.messageId === forkedFrom.sourceStartMessageId,
+    );
+    const end = inherited.findIndex(
+      ({ item }) =>
+        item.type === "assistant_message" && item.messageId === forkedFrom.sourceMessageId,
+    );
+    inherited =
+      start < 0 || end < start
+        ? []
+        : inherited
+            .slice(start, end + 1)
+            .filter(
+              ({ item }) => item.type === "user_message" || item.type === "assistant_message",
+            );
   }
   const markerItem = makeForkMarkerTurnItem({
     targetProjection: input.projection,
@@ -1458,7 +1489,9 @@ export function threadShellFromProjection(
     title: projection.thread.title,
     providerInstanceId: projection.thread.providerInstanceId,
     modelSelection: projection.thread.modelSelection,
-    ...(projection.thread.providerRoutingMode === undefined ? {} : { providerRoutingMode: projection.thread.providerRoutingMode }),
+    ...(projection.thread.providerRoutingMode === undefined
+      ? {}
+      : { providerRoutingMode: projection.thread.providerRoutingMode }),
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
@@ -1727,7 +1760,9 @@ function shellFromState(input: {
     title: input.state.thread.title,
     providerInstanceId: input.state.thread.providerInstanceId,
     modelSelection: input.state.thread.modelSelection,
-    ...(input.state.thread.providerRoutingMode === undefined ? {} : { providerRoutingMode: input.state.thread.providerRoutingMode }),
+    ...(input.state.thread.providerRoutingMode === undefined
+      ? {}
+      : { providerRoutingMode: input.state.thread.providerRoutingMode }),
     runtimeMode: input.state.thread.runtimeMode,
     interactionMode: input.state.thread.interactionMode,
     branch: input.state.thread.branch,
@@ -1821,9 +1856,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             // The importer audited untouched history inside this same write transaction.
             yield* sql`DELETE FROM orchestration_v2_projection_messages WHERE thread_id = ${event.threadId} AND run_id IS NULL`;
             yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${event.threadId} AND run_id IS NULL`;
-            yield* apply({ ...event, type: "thread.metadata-updated", payload: event.payload.thread });
-            for (const message of event.payload.messages) yield* apply({ ...event, type: "message.updated", payload: message });
-            for (const item of event.payload.turnItems) yield* apply({ ...event, type: "turn-item.updated", payload: item });
+            yield* apply({
+              ...event,
+              type: "thread.metadata-updated",
+              payload: event.payload.thread,
+            });
+            for (const message of event.payload.messages)
+              yield* apply({ ...event, type: "message.updated", payload: message });
+            for (const item of event.payload.turnItems)
+              yield* apply({ ...event, type: "turn-item.updated", payload: item });
             break;
           }
           case "thread.created":
@@ -3544,7 +3585,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             usageLimitResetAt: summary.usageLimitResetAt,
             latestRunId: RunId.make(row.run_id),
             providerInstanceId: thread.providerInstanceId,
-            ...(row.message_id === null ? {} : { latestRunMessageId: MessageId.make(row.message_id) }),
+            ...(row.message_id === null
+              ? {}
+              : { latestRunMessageId: MessageId.make(row.message_id) }),
             latestRunCompletedAt:
               row.completed_at === null ? null : DateTime.makeUnsafe(row.completed_at),
             updatedAt: thread.updatedAt,
@@ -4837,7 +4880,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ...(row.input_intent === null ? {} : { inputIntent: row.input_intent }),
           ...(row.created_by === null ? {} : { createdBy: row.created_by }),
           ...(row.message_id === null ? {} : { messageId: MessageId.make(row.message_id) }),
-          ...(row.failure_class === "usage_limit" ? { failure: { class: "usage_limit" as const } } : {}),
+          ...(row.failure_class === "usage_limit"
+            ? { failure: { class: "usage_limit" as const } }
+            : {}),
         }));
         const local: Array<TimelineIndexRow> = items.map((item) => ({
           sourceThreadId: threadId,
@@ -4859,17 +4904,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         if (sourceRun !== undefined) {
           const ordinals = new Map(source.records.runs.map((run) => [run.id, run.ordinal]));
           const sourceItems = source.local.map((row) => row.item);
-          const sourceRetryRuns = new Set(source.records.runs
-            .filter((run) => isHotlapUsageLimitContinuationMessageId(run.userMessageId))
-            .map((run) => run.id));
+          const sourceRetryRuns = new Set(
+            source.records.runs
+              .filter((run) => isHotlapUsageLimitContinuationMessageId(run.userMessageId))
+              .map((run) => run.id),
+          );
           inherited = [
             ...source.visible.filter(
               (row) => row.item.threadId !== fork.threadId || row.item.type === "fork",
             ),
             ...source.local.filter(
               (row) =>
-                !(row.item.type === "user_message" && isHotlapUsageLimitContinuationMessageId(row.item.messageId)) &&
-                !(row.item.type === "error" && row.item.failure?.class === "usage_limit" && row.item.runId !== null && sourceRetryRuns.has(row.item.runId)) &&
+                !(
+                  row.item.type === "user_message" &&
+                  isHotlapUsageLimitContinuationMessageId(row.item.messageId)
+                ) &&
+                !(
+                  row.item.type === "error" &&
+                  row.item.failure?.class === "usage_limit" &&
+                  row.item.runId !== null &&
+                  sourceRetryRuns.has(row.item.runId)
+                ) &&
                 !isOrchestrationV2SupersededInterrupt({
                   item: row.item,
                   attempts: source.records.attempts,
@@ -6122,8 +6177,12 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.pendingRuntimeRequest === null,
               )
               .filter((thread) => {
-                if (options.hotlapAutoResume || thread.limitRecovery?.hotlapCycle !== undefined) return true;
-                const resetMs = thread.usageLimitResetAt == null ? Number.NaN : Date.parse(thread.usageLimitResetAt);
+                if (options.hotlapAutoResume || thread.limitRecovery?.hotlapCycle !== undefined)
+                  return true;
+                const resetMs =
+                  thread.usageLimitResetAt == null
+                    ? Number.NaN
+                    : Date.parse(thread.usageLimitResetAt);
                 const nowMs = DateTime.toEpochMillis(options.now);
                 if (
                   !Number.isFinite(resetMs) ||

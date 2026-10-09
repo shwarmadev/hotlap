@@ -189,6 +189,31 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps an older owned link when another hotlap prevents replacement", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const oldHome = path.join(home, "old-hotlap");
+      const before = yield* commandIn({ home, baseDir: oldHome });
+      const link = (yield* before.install).installedPath!;
+      const oldLauncher = path.join(oldHome, "bin", "hotlap");
+      const oldContent = yield* fs.readFileString(oldLauncher);
+      const shadow = path.join(home, "shadow");
+      const foreign = path.join(shadow, "hotlap");
+      yield* fs.makeDirectory(shadow);
+      yield* fs.writeFileString(foreign, "#!/bin/sh\n# foreign hotlap\n", { mode: 0o755 });
+      process.env.PATH = [shadow, path.dirname(link)].join(":");
+
+      const after = yield* commandIn({ home, baseDir: path.join(home, "new-hotlap") });
+      const error = yield* Effect.flip(after.install);
+      expect(error.message).toContain(foreign);
+      expect(yield* fs.readLink(link)).toBe(oldLauncher);
+      expect(yield* fs.readFileString(oldLauncher)).toBe(oldContent);
+      expect(yield* fs.readFileString(foreign)).toBe("#!/bin/sh\n# foreign hotlap\n");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not read a large binary another hotlap links to", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -654,9 +654,12 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it.live("rotates more than 64 live parents without scanning retained tombstones", () =>
     Effect.gen(function* () {
-      const parents = Array.from({ length: 130 }, (_, index) =>
-        identity(1_000 + index, 100, 1_000 + index, 1_000 + index),
-      );
+      // Keep mock owners disjoint from the protected test worker identity.
+      const parentPidBase = process.pid + 1_000;
+      const parents = Array.from({ length: 130 }, (_, index) => {
+        const pid = parentPidBase + index;
+        return identity(pid, 100, pid, pid);
+      });
       let childListReads = 0;
       let identityCalls = 0;
       let snapshotCalls = 0;
@@ -683,7 +686,8 @@ describe("terminatePosixOwnedProcessTree", () => {
       const ledger = new Map<string, AcpOwnedPosixProcess>();
       const root: AcpPosixOwnershipRoot = { value: undefined };
       for (let index = 0; index < 5_000; index += 1) {
-        const tombstone = identity(100_000 + index, 1, 100_000 + index, 100_000 + index);
+        const pid = parentPidBase + 20_000 + index;
+        const tombstone = identity(pid, 1, pid, pid);
         ledger.set(`${tombstone.pid}:${tombstone.startTime}`, {
           ...tombstone,
           parentExecutable: undefined,

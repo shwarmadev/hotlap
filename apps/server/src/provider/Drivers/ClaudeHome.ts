@@ -77,13 +77,12 @@ export const copyClaudeSession = Effect.fn("copyClaudeSession")(function* (input
   const fromProjects = path.join(input.fromConfigDir, "projects");
   // Only a home that never ran Claude has no projects; any other failure is not a
   // missing conversation, which the caller would treat as nothing to resume.
-  const projects = yield* fileSystem
-    .readDirectory(fromProjects)
-    .pipe(
-      Effect.catchTag("PlatformError", (error) =>
+  const projects = yield* fileSystem.readDirectory(fromProjects).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed<Array<string>>([]) : Effect.fail(error),
-      ),
-    );
+    }),
+  );
   let copied = false;
   for (const project of projects) {
     const transcript = path.join(fromProjects, project, `${input.sessionId}.jsonl`);

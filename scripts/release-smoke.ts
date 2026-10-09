@@ -220,8 +220,7 @@ try {
     },
   );
 
-  NodeFS.rmSync(NodePath.resolve(tempRoot, "pnpm-lock.yaml"), { force: true });
-
+  // Match release builds: update workspace versions without upgrading pinned dependencies.
   NodeChildProcess.execFileSync("vp", ["install", "--lockfile-only", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",

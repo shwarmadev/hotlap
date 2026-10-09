@@ -15,6 +15,7 @@ import {
   AuthRelayWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -104,6 +105,15 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverLogoutAcpRegistry)).toBe(
       AuthProvidersManageScope,
     );
+  });
+
+  it("keeps thread search under orchestration read access", () => {
+    for (const method of [
+      ORCHESTRATION_V2_WS_METHODS.searchThread,
+      ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
   });
 
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
