@@ -1,13 +1,8 @@
+import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
-import {
-  beginMcpProviderSessionHandoff,
-  clearMcpProviderSession,
-  readMcpProviderSession,
-  rollbackMcpProviderSessionHandoff,
-  withAgentDeviceEnvironment,
-  type McpProviderSessionConfig,
-} from "./mcpSession.ts";
+import * as Effect from "effect/Effect";
+import * as McpProviderSessions from "./McpProviderSessions.ts";
+import { withAgentDeviceEnvironment, type McpProviderSessionConfig } from "./mcpSession.ts";
 
 const sessionConfig = (
   providerSessionId: string,
@@ -52,30 +47,34 @@ describe("device CLI environment", () => {
 });
 
 describe("provider session handoff", () => {
-  it("restores the previous config when the replacement fails to start", () => {
-    const previous = sessionConfig("session-old", "codex-primary");
-    const replacement = sessionConfig("session-new", "codex-secondary");
-    beginMcpProviderSessionHandoff(previous);
+  it.effect("restores the previous config when the replacement fails to start", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const previous = sessionConfig("session-old", "codex-primary");
+      const replacement = sessionConfig("session-new", "codex-secondary");
+      yield* sessions.beginHandoff(previous);
 
-    const handoff = beginMcpProviderSessionHandoff(replacement);
-    expect(readMcpProviderSession(previous.threadId)).toBe(replacement);
+      const handoff = yield* sessions.beginHandoff(replacement);
+      expect(yield* sessions.read(previous.threadId)).toBe(replacement);
 
-    rollbackMcpProviderSessionHandoff(handoff);
+      yield* sessions.rollbackHandoff(handoff);
 
-    expect(readMcpProviderSession(previous.threadId)).toBe(previous);
-    clearMcpProviderSession(previous.threadId);
-  });
+      expect(yield* sessions.read(previous.threadId)).toBe(previous);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
 
-  it("does not let a late rollback replace a newer staged config", () => {
-    const previous = sessionConfig("session-old", "codex-primary");
-    const firstReplacement = sessionConfig("session-first", "codex-secondary");
-    const latestReplacement = sessionConfig("session-latest", "codex-tertiary");
-    beginMcpProviderSessionHandoff(previous);
-    const firstHandoff = beginMcpProviderSessionHandoff(firstReplacement);
-    beginMcpProviderSessionHandoff(latestReplacement);
+  it.effect("does not let a late rollback replace a newer staged config", () =>
+    Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const previous = sessionConfig("session-old", "codex-primary");
+      const firstReplacement = sessionConfig("session-first", "codex-secondary");
+      const latestReplacement = sessionConfig("session-latest", "codex-tertiary");
+      yield* sessions.beginHandoff(previous);
+      const firstHandoff = yield* sessions.beginHandoff(firstReplacement);
+      yield* sessions.beginHandoff(latestReplacement);
 
-    expect(rollbackMcpProviderSessionHandoff(firstHandoff)).toBe(false);
-    expect(readMcpProviderSession(previous.threadId)).toBe(latestReplacement);
-    clearMcpProviderSession(previous.threadId);
-  });
+      expect(yield* sessions.rollbackHandoff(firstHandoff)).toBe(false);
+      expect(yield* sessions.read(previous.threadId)).toBe(latestReplacement);
+    }).pipe(Effect.provide(McpProviderSessions.layer)),
+  );
 });
