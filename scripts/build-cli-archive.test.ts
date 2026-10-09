@@ -7,12 +7,13 @@ import * as Path from "effect/Path";
 import { stageWebClient } from "./build-cli-archive.ts";
 
 it.layer(NodeServices.layer)("Hotlap archive web client", (it) => {
-  for (const [version, expectedIcon] of [
-    ["1.2.3", "assets/prod/t3-black-web-favicon.ico"],
-    ["1.2.3-nightly.20260914.1", "assets/nightly/nightly-web-favicon.ico"],
-    ["1.2.3-preview.20260914.1", "assets/nightly/nightly-web-favicon.ico"],
-  ] as const) {
-    it.effect(`ships channel branding without changing source assets (${version})`, () =>
+  it.effect.each([
+    { version: "1.2.3", expectedIcon: "assets/prod/t3-black-web-favicon.ico" },
+    { version: "1.2.3-nightly.20260914.1", expectedIcon: "assets/nightly/nightly-web-favicon.ico" },
+    { version: "1.2.3-preview.20260914.1", expectedIcon: "assets/nightly/nightly-web-favicon.ico" },
+  ] as const)(
+    "ships channel branding without changing source assets ($version)",
+    ({ version, expectedIcon }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -43,6 +44,5 @@ it.layer(NodeServices.layer)("Hotlap archive web client", (it) => {
           assert.isTrue(yield* fs.exists(path.join(source, "assets/app.js.map")));
         }),
       ),
-    );
-  }
+  );
 });
