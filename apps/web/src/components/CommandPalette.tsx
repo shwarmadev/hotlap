@@ -69,6 +69,7 @@ import {
   SunIcon,
   TextSearchIcon,
 } from "lucide-react";
+import { requestThreadFindOpen } from "./chat/threadFindActionBus";
 import {
   useCallback,
   useDeferredValue,
@@ -1147,6 +1148,9 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const activeThreadId = activeThread?.id;
+  const supportsThreadFind =
+    environments.find((environment) => environment.environmentId === activeThread?.environmentId)
+      ?.serverConfig?.threadFind === true;
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
@@ -1934,6 +1938,20 @@ function OpenCommandPaletteDialog(props: {
       icon: <MessageSquareDashedIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "chat.newWithoutProject",
       run: () => startScratchThread(scratchTargetEnvironmentId),
+    });
+  }
+
+  if (activeThreadId && supportsThreadFind) {
+    actionItems.push({
+      kind: "action",
+      value: "find-current-thread",
+      title: "Find in current thread",
+      searchTerms: ["find", "search", "messages", "plans"],
+      icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.find",
+      run: async () => {
+        requestThreadFindOpen();
+      },
     });
   }
 
@@ -3122,6 +3140,15 @@ function OpenCommandPaletteDialog(props: {
       if (activeThreadTranscriptRef === null) return;
       setOpen(false);
       void copyThreadTranscript(activeThreadTranscriptRef);
+      return;
+    }
+    // ChatView ignores shortcuts while the palette is open, so handle find here
+    // instead of letting the browser's own Find open.
+    if (command === "chat.find" && activeThreadId && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      requestThreadFindOpen();
       return;
     }
 

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -84,6 +84,15 @@ const fakePowerShell = (initial: string) => {
   );
   return { registry, spawner };
 };
+
+// The machine's own PATH may already hold a t3; each test sets the PATH it means.
+const machinePath = process.env.PATH;
+beforeEach(() => {
+  process.env.PATH = "";
+});
+afterEach(() => {
+  process.env.PATH = machinePath;
+});
 
 it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
   it.effect("links the launcher onto PATH and removes only that link", () =>
@@ -197,7 +206,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports when another hotlap earlier on PATH would run instead", () =>
+  it.effect("refuses to install behind another hotlap that runs first", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -205,16 +214,23 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       const shadow = path.join(home, "shadow");
       yield* fs.makeDirectory(shadow);
       yield* fs.writeFileString(path.join(shadow, "hotlap"), "#!/bin/sh\n", { mode: 0o755 });
-      const previous = process.env.PATH;
       process.env.PATH = [shadow, path.join(home, ".local", "bin")].join(":");
-      yield* Effect.addFinalizer(() => Effect.sync(() => (process.env.PATH = previous)));
 
       const command = yield* commandIn({ home });
+      const theirs = path.join(shadow, "hotlap");
+      expect((yield* command.state).shadowedBy).toBe(theirs);
+      // A link behind it would never run, so nothing is created.
+      const error = yield* Effect.flip(command.install);
+      expect(error.message).toContain(theirs);
+      expect(yield* fs.exists(path.join(home, ".local", "bin", "hotlap"))).toBe(false);
+
+      yield* fs.remove(theirs);
       const installed = yield* command.install;
-      expect(installed.installedPath).toBe(path.join(home, ".local", "bin", "hotlap"));
-      expect(installed.onPath).toBe(false);
-      yield* fs.remove(path.join(shadow, "hotlap"));
-      expect((yield* command.state).onPath).toBe(true);
+      expect(installed).toMatchObject({
+        onPath: true,
+        installedPath: path.join(home, ".local", "bin", "hotlap"),
+      });
+      expect(installed.shadowedBy).toBeUndefined();
     }).pipe(Effect.scoped),
   );
 
