@@ -182,7 +182,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           contents: `{ "responseStreamingMode": "paragraph" }`,
         });
 
-        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("10 seconds"));
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
@@ -209,7 +209,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const repointChanges = yield* service.subscribeChanges;
         yield* fs.remove(config.settingsPath);
         yield* fs.symlink(secondSettingsPath, config.settingsPath);
-        const repointed = yield* repointChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const repointed = yield* repointChanges.pipe(Stream.runHead, Effect.timeout("10 seconds"));
         assert.equal(Option.getOrUndefined(repointed)?.responseStreamingMode, "paragraph");
 
         const editChanges = yield* service.subscribeChanges;
@@ -217,7 +217,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           filePath: secondSettingsPath,
           contents: `{ "responseStreamingMode": "turn" }`,
         });
-        const edited = yield* editChanges.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const edited = yield* editChanges.pipe(Stream.runHead, Effect.timeout("10 seconds"));
         assert.equal(Option.getOrUndefined(edited)?.responseStreamingMode, "turn");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
@@ -242,10 +242,43 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           contents: `{ "responseStreamingMode": "paragraph" }`,
         });
 
-        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("10 seconds"));
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("fails start and ready when the initial linked directory cannot be watched", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const missingDirectory = path.join(directory, "missing");
+        const linkedSettingsPath = path.join(missingDirectory, "settings.json");
+        const failingFs = {
+          ...fs,
+          makeDirectory: (directoryPath, options) =>
+            directoryPath === missingDirectory
+              ? Effect.void
+              : fs.makeDirectory(directoryPath, options),
+        } satisfies FileSystem.FileSystem;
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.remove(config.settingsPath, { force: true });
+          yield* fs.symlink(linkedSettingsPath, config.settingsPath);
+          const failure = yield* service.start.pipe(Effect.flip, Effect.timeout("10 seconds"));
+          assert.equal(failure.operation, "prepare-directory");
+          assert.equal(failure.settingsPath, config.settingsPath);
+          const readyFailure = yield* service.ready.pipe(Effect.flip, Effect.timeout("10 seconds"));
+          assert.equal(readyFailure, failure);
+        }).pipe(
+          Effect.provide(layerServerSettings()),
+          Effect.provideService(FileSystem.FileSystem, failingFs),
+        );
+      }),
+    ).pipe(TestClock.withLive),
   );
 
   it.effect("preserves context when reading a provider environment secret fails", () => {

@@ -6,7 +6,7 @@
  * text generation model selection).
  *
  * Follows the same pattern as `keybindings.ts`: JSON file + Cache + PubSub +
- * Semaphore + FileSystem.watch for concurrency and external edit detection.
+ * Semaphore + scoped directory watching for concurrency and external edit detection.
  *
  * @module ServerSettings
  */
@@ -55,6 +55,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as ServerConfig from "./config.ts";
+import { watchSettingsDirectory } from "./settingsDirectoryWatcher.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -1290,16 +1291,19 @@ const make = Effect.gen(function* () {
     const directory = pathService.dirname(filePath);
     const fileName = pathService.basename(filePath);
     const resolvedFilePath = pathService.resolve(filePath);
-    return fs
-      .watch(directory)
-      .pipe(
+    return watchSettingsDirectory(directory).pipe(
+      Effect.mapError(
+        (cause) => new ServerSettingsError({ settingsPath, operation: "prepare-directory", cause }),
+      ),
+      Effect.map(
         Stream.filter(
-          (event) =>
-            event.path === fileName ||
-            event.path === filePath ||
-            pathService.resolve(directory, event.path) === resolvedFilePath,
+          (eventPath) =>
+            eventPath === fileName ||
+            eventPath === filePath ||
+            pathService.resolve(directory, eventPath) === resolvedFilePath,
         ),
-      );
+      ),
+    );
   };
 
   const startWatcher = Effect.gen(function* () {
@@ -1336,14 +1340,27 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
     const initialLinkTarget = yield* watchLinkTarget;
+    const settingsEvents = yield* Scope.provide(watchFileChanges(settingsPath), watcherScope);
+    const linkChanges = yield* Scope.provide(watchFileChanges(settingsPath), watcherScope);
+    const targetReady = yield* Deferred.make<void, ServerSettingsError>();
     const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
+      Stream.concat(linkChanges.pipe(Stream.mapEffect(() => watchLinkTarget))),
       Stream.changes,
       Stream.switchMap(
         Option.match({
-          onNone: () => Stream.empty,
+          onNone: () =>
+            Stream.fromEffect(Deferred.succeed(targetReady, undefined)).pipe(Stream.drain),
           onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+            Stream.unwrap(
+              watchFileChanges(linkTargetPath).pipe(
+                Effect.onExit((exit) =>
+                  Deferred.done(
+                    targetReady,
+                    Exit.map(exit, () => undefined),
+                  ),
+                ),
+              ),
+            ).pipe(Stream.ignore({ log: true })),
         }),
       ),
     );
@@ -1351,16 +1368,18 @@ const make = Effect.gen(function* () {
     // Debounce watch events so the file is fully written before we read it.
     // Editors emit multiple events per save (truncate, write, rename) and
     // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath),
-      linkTargetEvents,
-    ).pipe(Stream.debounce(Duration.millis(100)));
+    const debouncedSettingsEvents = Stream.merge(settingsEvents, linkTargetEvents).pipe(
+      Stream.debounce(Duration.millis(100)),
+    );
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(watcherScope),
       Effect.asVoid,
     );
+    // A caller may edit immediately after start. Both initial directories must
+    // be watched first, and each watcher buffers events until its stream runs.
+    yield* Deferred.await(targetReady);
   });
 
   const start = Effect.gen(function* () {
