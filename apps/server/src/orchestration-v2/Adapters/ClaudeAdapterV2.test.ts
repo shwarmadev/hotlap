@@ -2492,7 +2492,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             assert.notStrictEqual(harness.getOpenedOptions(), originalOptions);
             assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
           }
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
       ),
   );
 

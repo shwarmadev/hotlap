@@ -21,7 +21,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
   ProviderAdapterOpenSessionError,
-  type ProviderAdapterV2Shape,
+  type ProviderAdapterV2,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -32,7 +32,7 @@ const projectId = ProjectId.make("project:routing");
 const instances = ["codex-a", "codex-b", "codex-c"].map((instanceId) =>
   ProviderInstanceId.make(instanceId),
 );
-const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2Shape => ({
+const adapter = (instanceId: ProviderInstanceId): ProviderAdapterV2["Service"] => ({
   instanceId,
   driver: ProviderDriverKind.make("codex"),
   getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
@@ -211,7 +211,7 @@ it.effect("never authorizes runtime fallback from server-wide defaults", () =>
 );
 
 const failingOpenCalls: ProviderInstanceId[] = [];
-const failingAdapters = instances.map((instanceId): ProviderAdapterV2Shape => ({
+const failingAdapters = instances.map((instanceId): ProviderAdapterV2["Service"] => ({
   ...adapter(instanceId),
   openSession: ({ providerSessionId }) =>
     Effect.gen(function* () {
