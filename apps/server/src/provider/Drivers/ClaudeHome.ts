@@ -129,7 +129,7 @@ export const readClaudeLoginIdentity = Effect.fn("readClaudeLoginIdentity")(func
   const configured = env.CLAUDE_CONFIG_DIR?.trim();
   const globalConfigPath = configured
     ? path.join(path.resolve(configured), ".claude.json")
-    : path.join(NodeOS.homedir(), ".claude.json");
+    : path.join(yield* HostProcess.HomeDirectory, ".claude.json");
   const raw = yield* fileSystem
     .readFileString(globalConfigPath)
     .pipe(Effect.orElseSucceed(() => undefined));

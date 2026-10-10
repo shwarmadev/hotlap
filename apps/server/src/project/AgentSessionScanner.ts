@@ -1626,7 +1626,7 @@ export const make = Effect.gen(function* () {
 
   const prepareReconcileCandidates = Effect.fn("AgentSessionScanner.prepareReconcileCandidates")(
     function* (workspaceRoot: string, completedSources: ReadonlyArray<AgentSessionImportSource>) {
-      const root = path.resolve(expandHomePath(workspaceRoot));
+      const root = path.resolve(expandHomePath(workspaceRoot, homeDir));
       const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
       if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return [];
       const rootIdentity = yield* directoryIdentity(root);
@@ -1692,7 +1692,7 @@ export const make = Effect.gen(function* () {
           candidates.push({ _tag: "PreserveImported", source: currentSource });
           continue;
         }
-        const expandedCwd = expandHomePath(snapshotCwd.trim());
+        const expandedCwd = expandHomePath(snapshotCwd.trim(), homeDir);
         if (
           !path.isAbsolute(expandedCwd) ||
           (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
