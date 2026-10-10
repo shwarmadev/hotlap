@@ -392,6 +392,7 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
 
       const sessionError = yield* Effect.flip(sessions.verify(issued.token));
       const websocketError = yield* Effect.flip(sessions.verifyWebSocketToken(websocket.token));
+      const invalidationError = yield* Effect.flip(sessions.awaitInvalidation(issued.sessionId));
       const revokeError = yield* Effect.flip(sessions.revoke(issued.sessionId));
       const revokeOthersError = yield* Effect.flip(sessions.revokeAllExcept(issued.sessionId));
 
@@ -399,6 +400,11 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
       expect(websocketError._tag).toBe("WebSocketTokenVerificationError");
       expect(sessionError.cause).toBe(repositoryFailure);
       expect(websocketError.cause).toBe(repositoryFailure);
+      expect(invalidationError).toMatchObject({
+        _tag: "SessionCredentialVerificationError",
+        sessionId: issued.sessionId,
+      });
+      expect(invalidationError.cause).toBe(repositoryFailure);
       if (sessionError._tag === "SessionCredentialVerificationError") {
         expect(sessionError.sessionId).toBe(issued.sessionId);
       }
