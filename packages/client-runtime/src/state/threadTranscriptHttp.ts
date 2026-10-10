@@ -12,7 +12,6 @@ import { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
@@ -33,11 +32,7 @@ export const fetchEnvironmentThreadTranscript = Effect.fn(
     ...input,
     group: "orchestration",
     method: "GET",
-    url: (httpBaseUrl) =>
-      environmentEndpointUrl(
-        httpBaseUrl,
-        `/api/orchestration/threads/${input.threadId}/transcript`,
-      ),
+    url: (urls) => urls.threadTranscript({ params: { threadId: input.threadId } }),
     timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_TRANSCRIPT_TIMEOUT_MS,
     request: ({ client, headers }) =>
       client.threadTranscript({
