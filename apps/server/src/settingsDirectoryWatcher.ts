@@ -1,5 +1,5 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's lazy watcher has no attachment signal.
-import * as NodeFileSystem from "node:fs";
+import * as NodeFS from "node:fs";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
@@ -9,7 +9,7 @@ import * as Stream from "effect/Stream";
 /** Acquires the native watcher before returning; events buffer until consumption. */
 export const watchSettingsDirectory = (
   directory: string,
-  attach: typeof NodeFileSystem.watch = NodeFileSystem.watch,
+  attach: typeof NodeFS.watch = NodeFS.watch,
 ) =>
   Effect.gen(function* () {
     const events = yield* Queue.make<string, PlatformError.PlatformError | Cause.Done>();

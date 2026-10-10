@@ -1,5 +1,5 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Verifies the native watcher's acquisition and release.
-import * as NodeFileSystem from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -38,10 +38,10 @@ it.layer(NodeServices.layer)("settings directory watcher", (it) => {
         const directory = yield* fs.makeTempDirectoryScoped();
         const closed = yield* Deferred.make<void>();
         const watcher = yield* Effect.acquireRelease(
-          Effect.sync(() => NodeFileSystem.watch(directory)),
+          Effect.sync(() => NodeFS.watch(directory)),
           (resource) => Effect.sync(() => resource.close()),
         );
-        watcher.once("close", () => Effect.runSync(Deferred.succeed(closed, undefined)));
+        watcher.once("close", () => Deferred.doneUnsafe(closed, Effect.void));
         let attached = false;
         yield* Effect.scoped(
           watchSettingsDirectory(directory, () => {
