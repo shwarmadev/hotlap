@@ -98,6 +98,7 @@ export class ServerConfig extends Context.Service<
         Asset access uses it only to relocate durable attachment and browser-artifact paths. */
     readonly legacyAssetStateDir?: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;
+    readonly shellEnvironmentPrepared?: boolean | undefined;
     readonly desktopTelemetryFd?: number | undefined;
     readonly desktopTelemetryControlFd?: number | undefined;
     readonly desktopBrowserFd?: number | undefined;

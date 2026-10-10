@@ -58,6 +58,7 @@ import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
 
@@ -500,7 +501,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     case "media-file": {
       const config = yield* ServerConfig.ServerConfig;
       let requestedPath = remapMigratedStateMediaPath(
-        expandHomePath(input.resource.path),
+        expandHomePath(input.resource.path, yield* HostProcess.HomeDirectory),
         config,
         path,
       );

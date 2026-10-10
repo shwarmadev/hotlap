@@ -95,8 +95,8 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
   waiting: {
     label: "Waiting",
     icon: "clock",
-    className: "text-foreground",
-    iconTintClassName: "accent-foreground",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
   },
   failed: {
     label: "Failed",
