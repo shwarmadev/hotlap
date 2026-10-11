@@ -8,7 +8,6 @@ import {
   ProviderInstanceId,
   ThreadId,
   AuthOrchestrationOperateScope,
-  ORCHESTRATION_V2_WS_METHODS,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
   AuthPreviewOperateScope,
