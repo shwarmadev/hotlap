@@ -60,6 +60,7 @@ it.effect("records upstream and Hotlap migrations in separate ledgers", () =>
       assert.deepEqual(hotlap, [
         { migrationId: 1, name: "ProjectionThreadForks" },
         { migrationId: 2, name: "ProjectionThreadProviderRoutingMode" },
+        { migrationId: 3, name: "ProjectionThreadMessagesAssistantTurnIndex" },
       ]);
     }),
   ),
@@ -88,6 +89,7 @@ it.effect("upgrades a valid older T3 schema before applying Hotlap migrations", 
       assert.deepEqual(hotlap, [
         { migrationId: 1, name: "ProjectionThreadForks" },
         { migrationId: 2, name: "ProjectionThreadProviderRoutingMode" },
+        { migrationId: 3, name: "ProjectionThreadMessagesAssistantTurnIndex" },
       ]);
     }),
   ),
@@ -164,6 +166,7 @@ it.effect("adopts an exact legacy fork migration after verifying its columns", (
       assert.deepEqual(hotlap, [
         { migrationId: 1, name: "ProjectionThreadForks" },
         { migrationId: 2, name: "ProjectionThreadProviderRoutingMode" },
+        { migrationId: 3, name: "ProjectionThreadMessagesAssistantTurnIndex" },
       ]);
 
       const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(projection_threads)`;
