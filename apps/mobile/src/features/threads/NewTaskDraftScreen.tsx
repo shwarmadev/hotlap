@@ -1062,6 +1062,7 @@ export function NewTaskDraftScreen(props: {
     branchName: selectedBranchName,
     startFromOrigin: flow.startFromOrigin,
     workspaceMode: flow.workspaceMode,
+    pullRequestReference: flow.pullRequestReference,
   });
   const workspaceLabel = resolveNewTaskWorkspaceLabel({
     workspaceMode: flow.workspaceMode,

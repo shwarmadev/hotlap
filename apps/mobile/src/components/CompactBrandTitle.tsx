@@ -24,6 +24,7 @@ export function brandTitleOffset(): number {
 export function CompactBrandTitle(
   props: {
     readonly allowFontScaling?: boolean;
+    readonly accessibilityLabel?: string;
   } = {},
 ) {
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
@@ -33,7 +34,7 @@ export function CompactBrandTitle(
   return (
     <View
       aria-level={1}
-      accessibilityLabel="Hotlap, Threads"
+      accessibilityLabel={props.accessibilityLabel ?? "Hotlap, Threads"}
       accessible
       role="heading"
       className="flex-row items-center gap-1.5"

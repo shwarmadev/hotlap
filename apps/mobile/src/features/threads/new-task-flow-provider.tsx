@@ -180,6 +180,7 @@ type NewTaskFlowContextValue = {
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
+  readonly pullRequestReference: string | undefined;
   readonly draftKey: string | null;
   readonly editingPendingTask: QueuedThreadMessage | null;
   readonly prompt: string;
@@ -1169,6 +1170,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           branch: message.creation.branch,
           worktreePath: message.creation.worktreePath,
           startFromOrigin: message.creation.startFromOrigin ?? false,
+          pullRequestReference: message.creation.pullRequestReference,
         },
       });
     }
@@ -1247,6 +1249,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
+          ...(mode === "worktree" && workspaceSelection?.pullRequestReference
+            ? { pullRequestReference: workspaceSelection.pullRequestReference }
+            : {}),
           // An explicit picker choice wins. Otherwise only a task sending now
           // records the current checkout: a queued local task drains days
           // later against whatever is checked out then, so a queue-time
@@ -1398,6 +1403,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedWorktreePath,
       startFromOrigin,
       draftKey: selectedProjectDraftKey,
+      pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
       editingPendingTask,
       prompt,
       attachments,
@@ -1502,6 +1508,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,
+      selectedProjectDraft.workspaceSelection?.pullRequestReference,
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
