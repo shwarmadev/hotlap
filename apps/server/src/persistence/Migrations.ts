@@ -76,6 +76,7 @@ import Migration0057 from "./Migrations/057_ScheduledTaskWebhooks.ts";
 import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
+import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -87,6 +88,7 @@ import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
+<<<<<<< HEAD
 const migrationEffects = {
   1: Migration0001,
   2: Migration0002,
@@ -148,6 +150,7 @@ const migrationEffects = {
   58: Migration0058,
   59: Migration0059,
   60: Migration0060,
+  61: Migration0061,
 } as const;
 
 export const migrationEntries = upstreamMigrationManifest.map(

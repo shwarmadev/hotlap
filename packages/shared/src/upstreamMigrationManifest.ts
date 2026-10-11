@@ -60,6 +60,7 @@ export const upstreamMigrationManifest = [
   [58, "WebhookRelayDeliveries"],
   [59, "McpAppModelContext"],
   [60, "ThreadSnapshotWindowIndexes"],
+  [61, "PullRequestReviewGuides"],
 ] as const;
 
 export type UpstreamMigrationManifest = typeof upstreamMigrationManifest;
