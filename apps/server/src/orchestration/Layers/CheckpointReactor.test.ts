@@ -1732,39 +1732,138 @@ describe("CheckpointReactor", () => {
     expect(threadDetailReads).toEqual([]);
   });
 
-  it("keeps an existing pre-turn baseline on a provider turn start", async () => {
-    // Seeds turn refs 0-2 from README v1-v3 and leaves v3 in the worktree.
-    const harness = await createHarness();
-    const threadId = ThreadId.make("thread-1");
-    const turnId = asTurnId("turn-existing-baseline");
+  effectIt.effect(
+    "keeps an existing baseline and captures the next turn without reading full history",
+    () =>
+      Effect.gen(function* () {
+        const threadDetailReads: ThreadId[] = [];
+        // Seeds turn refs 0-2 from README v1-v3 and leaves v3 in the worktree.
+        const harness = yield* Effect.promise(() => createHarness({ threadDetailReads }));
+        const threadId = ThreadId.make("thread-1");
+        const turnId = asTurnId("turn-3");
+        const createdAt = "2026-01-01T00:00:00.000Z";
 
-    harness.provider.emit({
-      type: "turn.started",
-      eventId: EventId.make("evt-turn-started-existing-baseline"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: "2026-01-01T00:00:00.000Z",
-      threadId,
-      turnId,
-    });
-    // Runtime events run in order, so this receipt proves the start was handled.
-    harness.provider.emit({
-      type: "turn.completed",
-      eventId: EventId.make("evt-turn-completed-existing-baseline"),
-      provider: ProviderDriverKind.make("codex"),
-      createdAt: "2026-01-01T00:00:01.000Z",
-      threadId,
-      turnId,
-      payload: { state: "completed" },
-    });
-    expect(await Effect.runPromise(harness.nextReceipt)).toMatchObject({
-      type: "checkpoint.diff.finalized",
-      turnId,
-    });
+        // Project checkpoints 1 and 2, so the baseline is turn 2 and the next capture is turn 3.
+        for (const turnCount of [1, 2]) {
+          yield* harness.engine.dispatch({
+            type: "thread.turn.diff.complete",
+            commandId: CommandId.make(`cmd-seed-diff-${turnCount}`),
+            threadId,
+            turnId: asTurnId(`turn-${turnCount}`),
+            completedAt: createdAt,
+            checkpointRef: checkpointRefForThreadTurn(threadId, turnCount),
+            status: "ready",
+            files: [],
+            checkpointTurnCount: turnCount,
+            createdAt,
+          });
+        }
+        // The capture names the turn's latest assistant message, ignoring other turns.
+        for (const [messageId, messageTurnId, at] of [
+          ["assistant-early", turnId, "2026-01-01T00:00:01.000Z"],
+          ["assistant-latest", turnId, "2026-01-01T00:00:02.000Z"],
+          ["assistant-other-turn", asTurnId("turn-2"), "2026-01-01T00:00:03.000Z"],
+        ] as const) {
+          yield* harness.engine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: CommandId.make(`cmd-${messageId}`),
+            threadId,
+            messageId: MessageId.make(messageId),
+            delta: "reply",
+            turnId: messageTurnId,
+            createdAt: at,
+          });
+        }
+        NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "v4\n", "utf8");
 
-    expect(
-      gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 0), "README.md"),
-    ).toBe("v1\n");
-  });
+        harness.provider.emit({
+          type: "turn.started",
+          eventId: EventId.make("evt-turn-started-existing-baseline"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+        });
+        // Runtime events run in order, so this receipt proves the start was handled.
+        harness.provider.emit({
+          type: "turn.completed",
+          eventId: EventId.make("evt-turn-completed-existing-baseline"),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId,
+          payload: { state: "completed" },
+        });
+        expect(yield* harness.nextReceipt).toMatchObject({
+          type: "checkpoint.diff.finalized",
+          turnId,
+          checkpointTurnCount: 3,
+        });
+        yield* Effect.promise(harness.drain);
+
+        // A recaptured baseline would hold v4.
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 2), "README.md"),
+        ).toBe("v3\n");
+        expect(
+          gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 3), "README.md"),
+        ).toBe("v4\n");
+        const thread = (yield* Effect.promise(harness.readModel)).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        expect(thread?.checkpoints.find((entry) => entry.checkpointTurnCount === 3)).toMatchObject({
+          turnId,
+          status: "ready",
+          assistantMessageId: "assistant-latest",
+          files: [{ path: "README.md", kind: "modified", additions: 1, deletions: 1 }],
+        });
+        expect(threadDetailReads).toEqual([]);
+      }),
+  );
+
+  effectIt.effect("does not checkpoint an archived thread whose provider turn starts late", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() =>
+        createHarness({ seedFilesystemCheckpoints: false, secondThreadSharingWorktree: true }),
+      );
+      const archivedThreadId = ThreadId.make("thread-1");
+      const activeThreadId = ThreadId.make("thread-2");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("cmd-archive-before-start"),
+        threadId: archivedThreadId,
+      });
+
+      for (const [type, threadId] of [
+        ["turn.started", archivedThreadId],
+        ["turn.completed", archivedThreadId],
+        ["turn.started", activeThreadId],
+      ] as const) {
+        harness.provider.emit({
+          type,
+          eventId: EventId.make(`evt-${type}-${threadId}`),
+          provider: ProviderDriverKind.make("codex"),
+          createdAt,
+          threadId,
+          turnId: asTurnId(`turn-${threadId}`),
+          ...(type === "turn.completed" ? { payload: { state: "completed" } } : {}),
+        });
+      }
+      // Runtime events run in order, so the active thread's baseline proves the
+      // archived thread's events were handled first.
+      expect(yield* harness.nextReceipt).toMatchObject({
+        type: "checkpoint.baseline.captured",
+        threadId: activeThreadId,
+      });
+      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(archivedThreadId, 0))).toBe(
+        false,
+      );
+      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(archivedThreadId, 1))).toBe(
+        false,
+      );
+    }),
+  );
 
   it("does not create checkpoints while importing historical user messages", async () => {
     const harness = await createHarness({

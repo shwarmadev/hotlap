@@ -313,6 +313,20 @@ const ProjectionThreadCheckpointContextThreadRowSchema = Schema.Struct({
   workspaceRoot: Schema.String,
   worktreePath: Schema.NullOr(Schema.String),
 });
+const ProjectionThreadCheckpointCaptureContextRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  workspaceRoot: Schema.NullOr(Schema.String),
+  worktreePath: Schema.NullOr(Schema.String),
+  activeTurnId: Schema.NullOr(TurnId),
+  latestCheckpointTurnCount: NonNegativeInt,
+});
+const ProjectionTurnCheckpointRowSchema = Schema.Struct({
+  checkpointTurnCount: NonNegativeInt,
+  status: OrchestrationCheckpointStatus,
+  assistantMessageId: Schema.NullOr(MessageId),
+});
+const ProjectionMessageIdRowSchema = Schema.Struct({ messageId: MessageId });
 const FullThreadDiffContextLookupInput = Schema.Struct({
   threadId: ThreadId,
   checkpointTurnCount: NonNegativeInt,
@@ -1376,6 +1390,76 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  // Mirrors the thread detail read's visibility (active threads only) without
+  // loading messages. MAX uses the (thread_id, checkpoint_turn_count) unique index.
+  const getThreadCheckpointCaptureContextRow = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: ProjectionThreadCheckpointCaptureContextRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          threads.thread_id AS "threadId",
+          threads.project_id AS "projectId",
+          projects.workspace_root AS "workspaceRoot",
+          threads.worktree_path AS "worktreePath",
+          sessions.active_turn_id AS "activeTurnId",
+          COALESCE(
+            (
+              SELECT MAX(turns.checkpoint_turn_count)
+              FROM projection_turns AS turns
+              WHERE turns.thread_id = threads.thread_id
+            ),
+            0
+          ) AS "latestCheckpointTurnCount"
+        FROM projection_threads AS threads
+        LEFT JOIN projection_projects AS projects
+          ON projects.project_id = threads.project_id
+          AND projects.deleted_at IS NULL
+        LEFT JOIN projection_thread_sessions AS sessions
+          ON sessions.thread_id = threads.thread_id
+        WHERE threads.thread_id = ${threadId}
+          AND threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        LIMIT 1
+      `,
+  });
+
+  const getTurnCheckpointRow = SqlSchema.findOneOption({
+    Request: ThreadTurnIdLookupInput,
+    Result: ProjectionTurnCheckpointRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          checkpoint_turn_count AS "checkpointTurnCount",
+          checkpoint_status AS "status",
+          assistant_message_id AS "assistantMessageId"
+        FROM projection_turns
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
+          AND checkpoint_turn_count IS NOT NULL
+        LIMIT 1
+      `,
+  });
+
+  // The unary + keeps SQLite off the (thread_id, created_at) index, which would
+  // walk the whole thread (1.7 s for an old turn on a 49k-message thread).
+  // idx_projection_thread_messages_thread_turn_role_streaming reads only this
+  // turn's assistant rows, then sorts them.
+  const getLatestAssistantMessageIdForTurnRow = SqlSchema.findOneOption({
+    Request: ThreadTurnIdLookupInput,
+    Result: ProjectionMessageIdRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT message_id AS "messageId"
+        FROM projection_thread_messages
+        WHERE thread_id = ${threadId}
+          AND turn_id = ${turnId}
+          AND role = 'assistant'
+        ORDER BY +created_at DESC, +message_id DESC
+        LIMIT 1
+      `,
+  });
+
   const getActiveThreadRowById = SqlSchema.findOneOption({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadDbRowSchema,
@@ -2319,11 +2403,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // the matching turn-anchor time range so they land on the same page as the
   // turns around them. Proposed plans and checkpoints stay unwindowed: they
   // are metadata-scale.
+  // Two branches so each uses an index. Turn-linked rows start from the
+  // window's turns (CROSS JOIN fixes that join order) and use the
+  // (thread_id, turn_id, ...) index; turnless rows use the (thread_id,
+  // created_at) range. One OR'd query walked every message in the thread
+  // instead: 15-24 s on a 49k-message thread, blocking the host.
   const listThreadMessageRowsByThreadWindow = SqlSchema.findAll({
     Request: ThreadTurnRangeLookupInput,
     Result: ProjectionThreadMessageDbRowSchema,
     execute: ({ threadId, minAnchorAt, minTurnKey, beforeAnchorAt, beforeTurnKey }) =>
       sql`
+        SELECT
+          messages.message_id AS "messageId",
+          messages.thread_id AS "threadId",
+          messages.turn_id AS "turnId",
+          messages.role,
+          messages.text,
+          messages.attachments_json AS "attachments",
+          messages.context_json AS "context",
+          messages.is_streaming AS "isStreaming",
+          messages.created_at AS "createdAt",
+          messages.updated_at AS "updatedAt"
+        FROM (
+          SELECT turn_id FROM projection_turns
+          WHERE thread_id = ${threadId}
+            AND turn_id IS NOT NULL
+            AND (
+              requested_at > ${minAnchorAt}
+              OR (
+                requested_at = ${minAnchorAt}
+                AND turn_id >= ${minTurnKey}
+              )
+            )
+            AND (
+              requested_at < ${beforeAnchorAt}
+              OR (
+                requested_at = ${beforeAnchorAt}
+                AND turn_id < ${beforeTurnKey}
+              )
+            )
+        ) AS window_turns
+        CROSS JOIN projection_thread_messages AS messages
+          ON messages.thread_id = ${threadId}
+          AND messages.turn_id = window_turns.turn_id
+        UNION ALL
         SELECT
           message_id AS "messageId",
           thread_id AS "threadId",
@@ -2337,33 +2460,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_messages
         WHERE thread_id = ${threadId}
-          AND (
-            turn_id IN (
-              SELECT turn_id FROM projection_turns
-              WHERE thread_id = ${threadId}
-                AND turn_id IS NOT NULL
-                AND (
-                  requested_at > ${minAnchorAt}
-                  OR (
-                    requested_at = ${minAnchorAt}
-                    AND turn_id >= ${minTurnKey}
-                  )
-                )
-                AND (
-                  requested_at < ${beforeAnchorAt}
-                  OR (
-                    requested_at = ${beforeAnchorAt}
-                    AND turn_id < ${beforeTurnKey}
-                  )
-                )
-            )
-            OR (
-              turn_id IS NULL
-              AND created_at >= ${minAnchorAt}
-              AND created_at < ${beforeAnchorAt}
-            )
-          )
-        ORDER BY created_at ASC, message_id ASC
+          AND +turn_id IS NULL
+          AND created_at >= ${minAnchorAt}
+          AND created_at < ${beforeAnchorAt}
+        ORDER BY "createdAt" ASC, "messageId" ASC
       `,
   });
 
@@ -3755,6 +3855,39 @@ pending_approval_requests AS (
       });
     });
 
+  const getThreadCheckpointCaptureContext: ProjectionSnapshotQueryShape["getThreadCheckpointCaptureContext"] =
+    (threadId) =>
+      getThreadCheckpointCaptureContextRow({ threadId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getThreadCheckpointCaptureContext:query",
+            "ProjectionSnapshotQuery.getThreadCheckpointCaptureContext:decodeRow",
+          ),
+        ),
+      );
+
+  const getTurnCheckpoint: ProjectionSnapshotQueryShape["getTurnCheckpoint"] = (input) =>
+    getTurnCheckpointRow(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getTurnCheckpoint:query",
+          "ProjectionSnapshotQuery.getTurnCheckpoint:decodeRow",
+        ),
+      ),
+    );
+
+  const getLatestAssistantMessageIdForTurn: ProjectionSnapshotQueryShape["getLatestAssistantMessageIdForTurn"] =
+    (input) =>
+      getLatestAssistantMessageIdForTurnRow(input).pipe(
+        Effect.map(Option.map((row) => row.messageId)),
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdForTurn:query",
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdForTurn:decodeRow",
+          ),
+        ),
+      );
+
   const getFullThreadDiffContext: NonNullable<
     ProjectionSnapshotQueryShape["getFullThreadDiffContext"]
   > = (threadId, toTurnCount) =>
@@ -4631,6 +4764,9 @@ pending_approval_requests AS (
     getFirstActiveThreadIdByProjectId,
     getImportedAgentSessionSources,
     getThreadCheckpointContext,
+    getThreadCheckpointCaptureContext,
+    getTurnCheckpoint,
+    getLatestAssistantMessageIdForTurn,
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadRuntimeContext,

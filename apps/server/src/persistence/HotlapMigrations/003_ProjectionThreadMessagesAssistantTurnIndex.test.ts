@@ -45,6 +45,26 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           ),
           plan.map((row) => row.detail).join("\n"),
         );
+
+        // Same shape as ProjectionSnapshotQuery.getLatestAssistantMessageIdForTurn.
+        const latestPlan = yield* sql<{ readonly detail: string }>`
+          EXPLAIN QUERY PLAN
+          SELECT message_id
+          FROM projection_thread_messages
+          WHERE thread_id = ${"thread-1"}
+            AND turn_id = ${"turn-1"}
+            AND role = 'assistant'
+          ORDER BY +created_at DESC, +message_id DESC
+          LIMIT 1
+        `;
+        assert.isTrue(
+          latestPlan.some((row) =>
+            row.detail.includes(
+              "USING INDEX idx_projection_thread_messages_thread_turn_role_streaming (thread_id=? AND turn_id=? AND role=?)",
+            ),
+          ),
+          latestPlan.map((row) => row.detail).join("\n"),
+        );
       }),
     );
   },
