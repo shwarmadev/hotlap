@@ -7046,14 +7046,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   node: artifacts.node,
                 }),
                 emitProviderEvent({
-                  type: "runtime_request.updated",
-                  driver: CLAUDE_PROVIDER,
-                  runtimeRequest: artifacts.request,
-                }),
-                emitProviderEvent({
                   type: "turn_item.updated",
                   driver: CLAUDE_PROVIDER,
                   turnItem: artifacts.turnItem,
+                }),
+                emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver: CLAUDE_PROVIDER,
+                  runtimeRequest: artifacts.request,
                 }),
               ],
               { concurrency: 1 },
@@ -7148,14 +7148,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 node: artifacts.node,
               }),
               emitProviderEvent({
-                type: "runtime_request.updated",
-                driver: CLAUDE_PROVIDER,
-                runtimeRequest: artifacts.request,
-              }),
-              emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
                 turnItem: artifacts.turnItem,
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: artifacts.request,
               }),
             ],
             { concurrency: 1 },

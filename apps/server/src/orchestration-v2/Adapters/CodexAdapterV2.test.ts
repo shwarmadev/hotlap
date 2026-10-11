@@ -2672,6 +2672,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           event.type === "runtime_request.updated" ? [event.runtimeRequest] : [],
         );
         assert.lengthOf(requests, 1);
+        const requestIndex = harness.events.findIndex(
+          (event) => event.type === "runtime_request.updated",
+        );
+        const actionableItemIndex = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.requestId === requests[0]?.id,
+        );
+        assert.isAtLeast(actionableItemIndex, 0);
+        assert.isBelow(
+          actionableItemIndex,
+          requestIndex,
+          "A pending request must already have its actionable item when a response arrives",
+        );
         assert.equal(requests[0]?.status, "pending");
         assert.deepEqual(requests[0]?.responseCapability, { type: "message" });
         const questionItem = harness.events.find(

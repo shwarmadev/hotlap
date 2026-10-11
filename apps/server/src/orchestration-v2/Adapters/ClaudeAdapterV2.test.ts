@@ -1268,7 +1268,24 @@ describe("ClaudeAdapterV2 resume compaction", () => {
           toolUseID: "tool-bash-full-access",
         });
         const longQuestion = `Choose a deployment target: ${"region ".repeat(80)}`;
+        const actionableRequestIds = new Set<string>();
         const questionRequestEvent = yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.sync(() => {
+              if (
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "user_input_request"
+              ) {
+                actionableRequestIds.add(event.turnItem.requestId);
+              }
+              if (event.type === "runtime_request.updated") {
+                assert.isTrue(
+                  actionableRequestIds.has(event.runtimeRequest.id),
+                  "A pending request must already have its actionable item",
+                );
+              }
+            }),
+          ),
           Stream.filter((event) => event.type === "runtime_request.updated"),
           Stream.runHead,
           Effect.forkScoped,
