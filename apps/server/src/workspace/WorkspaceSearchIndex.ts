@@ -23,7 +23,7 @@ import type {
   ProjectSearchContentsResult,
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { FileFinder } from "./fffNode.ts";
 
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
@@ -161,7 +161,7 @@ function mapFileSearchResult(
 ): ProjectSearchEntriesResult {
   const entries = result.items.flatMap((item) => {
     const entry = toFileEntry(item);
-    return entry && (!imageOnly || isWorkspaceImagePreviewPath(entry.path)) ? [entry] : [];
+    return entry && (!imageOnly || isProjectFaviconPath(entry.path)) ? [entry] : [];
   });
   return {
     entries: entries.slice(0, limit),
