@@ -75,7 +75,7 @@ export function buildForkModelOptions(
         : [],
     ),
   );
-  return buildModelOptions(config, catalogSelection).flatMap((option) => {
+  return buildModelOptions(config, catalogSelection, undefined, null).flatMap((option) => {
     const isInherited =
       option.selection.instanceId === catalogSelection.instanceId &&
       option.selection.model === catalogSelection.model;
