@@ -88,7 +88,6 @@ import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
-<<<<<<< HEAD
 const migrationEffects = {
   1: Migration0001,
   2: Migration0002,
