@@ -120,6 +120,7 @@ function OpenForkConversationDialog(props: {
         <DialogPanel>
           {modelSelection ? (
             <ProviderModelPicker
+              environmentId={props.snapshot.environmentId}
               activeInstanceId={modelSelection.instanceId}
               model={modelSelection.model}
               lockedProvider={null}
