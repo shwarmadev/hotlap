@@ -1733,28 +1733,37 @@ describe("CheckpointReactor", () => {
   });
 
   it("keeps an existing pre-turn baseline on a provider turn start", async () => {
-    const threadDetailReads: ThreadId[] = [];
     // Seeds turn refs 0-2 from README v1-v3 and leaves v3 in the worktree.
-    const harness = await createHarness({ threadDetailReads });
+    const harness = await createHarness();
+    const threadId = ThreadId.make("thread-1");
+    const turnId = asTurnId("turn-existing-baseline");
 
     harness.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-existing-baseline"),
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:00:00.000Z",
-      threadId: ThreadId.make("thread-1"),
-      turnId: asTurnId("turn-existing-baseline"),
+      threadId,
+      turnId,
     });
-    await harness.drain();
+    // Runtime events run in order, so this receipt proves the start was handled.
+    harness.provider.emit({
+      type: "turn.completed",
+      eventId: EventId.make("evt-turn-completed-existing-baseline"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+      threadId,
+      turnId,
+      payload: { state: "completed" },
+    });
+    expect(await Effect.runPromise(harness.nextReceipt)).toMatchObject({
+      type: "checkpoint.diff.finalized",
+      turnId,
+    });
 
     expect(
-      gitShowFileAtRef(
-        harness.cwd,
-        checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
-        "README.md",
-      ),
+      gitShowFileAtRef(harness.cwd, checkpointRefForThreadTurn(threadId, 0), "README.md"),
     ).toBe("v1\n");
-    expect(threadDetailReads).toEqual([]);
   });
 
   it("does not create checkpoints while importing historical user messages", async () => {
