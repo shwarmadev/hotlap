@@ -745,6 +745,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       ownerId: settingsOwnerId,
       environmentId: props.environmentId,
       providerInstanceId: currentModelSelection.instanceId,
+      ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,
       selectedModel: currentModelSelection,
       reportedModelSelection: props.reportedModelSelection,
@@ -786,6 +787,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       selectedProviderStatus?.displayName,
       selectedProviderStatus?.auth.email,
       settingsOwnerId,
+      lockedProviderInstanceId,
       threadProviderGroups,
     ],
   );

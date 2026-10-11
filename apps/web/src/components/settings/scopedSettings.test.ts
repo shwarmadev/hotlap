@@ -5,6 +5,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -888,4 +889,17 @@ describe("partial object patches at project scope", () => {
       },
     });
   });
+});
+
+it("routes legacy model preference keys exclusively to the selected environment", () => {
+  const patch = {
+    favorites: [{ provider: ProviderInstanceId.make("codex"), model: "sol" }],
+    providerModelPreferences: {},
+  };
+  const plan = planScopedSettingsPatch(named, environments, patch);
+  expect(plan.clientPatch).toEqual({});
+  expect(plan.hasClientWrite).toBe(false);
+  expect(plan.serverWrites).toEqual([
+    { environmentId: server.environmentId, label: server.label, patch },
+  ]);
 });
