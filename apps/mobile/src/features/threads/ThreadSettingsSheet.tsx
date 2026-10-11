@@ -7,6 +7,7 @@ import {
 import type {
   EnvironmentId,
   ModelSelection,
+  ProjectId,
   ProviderInstanceId,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
@@ -260,6 +261,7 @@ type ThreadSettingsSubmenuPage =
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
+  readonly projectId: ProjectId | null;
   readonly providerInstanceId?: ProviderInstanceId;
   readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
@@ -386,7 +388,13 @@ function ThreadSettingsSessionProvider(
     () =>
       manageHidden && config
         ? groupByProvider(
-            buildModelOptions(config, props.selectedModel, props.lockedProviderInstanceId, true),
+            buildModelOptions(
+              config,
+              props.selectedModel,
+              props.lockedProviderInstanceId,
+              props.projectId,
+              true,
+            ),
           )
         : props.providerGroups,
     [
@@ -395,6 +403,7 @@ function ThreadSettingsSessionProvider(
       props.providerGroups,
       props.selectedModel,
       props.lockedProviderInstanceId,
+      props.projectId,
     ],
   );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
@@ -1679,6 +1688,7 @@ export function NewTaskThreadSettingsRouteScreen() {
   return (
     <ThreadSettingsPickerScreen
       environmentId={flow.selectedEnvironmentId}
+      projectId={flow.selectedProject?.id ?? null}
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}
