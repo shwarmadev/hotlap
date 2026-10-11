@@ -311,6 +311,7 @@ describe("CheckpointReactor", () => {
     readonly gitStatusRefreshCalls?: Array<string>;
     readonly pullRequestRefreshCalls?: Array<string>;
     readonly pullRequestRefresh?: Effect.Effect<void>;
+    readonly threadDetailReads?: Array<ThreadId>;
   }) {
     const cwd = createGitRepository();
     if (options?.initializeGit === false) {
@@ -333,7 +334,18 @@ describe("CheckpointReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
-    const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    // Records full thread-detail reads, which load every message in the thread.
+    const projectionSnapshotLayer = Layer.effect(
+      ProjectionSnapshotQuery,
+      Effect.map(Effect.service(ProjectionSnapshotQuery), (query) => ({
+        ...query,
+        getThreadDetailById: (threadId, detailOptions) => {
+          options?.threadDetailReads?.push(threadId);
+          return query.getThreadDetailById(threadId, detailOptions);
+        },
+      })),
+    ).pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(ThreadBackgroundLiveness.layer),
       Layer.provide(ThreadPlanProgress.layer),
       Layer.provide(RepositoryIdentityResolver.layer),
@@ -1677,6 +1689,72 @@ describe("CheckpointReactor", () => {
         "README.md",
       ),
     ).toBe("v1\n");
+  });
+
+  it("captures the pre-turn baseline in the thread worktree without reading full history", async () => {
+    const projectRoot = createGitRepository();
+    tempDirs.push(projectRoot);
+    const threadDetailReads: ThreadId[] = [];
+    const harness = await createHarness({
+      hasSession: false,
+      seedFilesystemCheckpoints: false,
+      projectWorkspaceRoot: projectRoot,
+      threadDetailReads,
+    });
+    NodeFS.writeFileSync(NodePath.join(harness.cwd, "README.md"), "worktree\n", "utf8");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-worktree-baseline"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: MessageId.make("message-user-worktree"),
+          role: "user",
+          text: "start turn",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const baselineRef = checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0);
+    expect(await Effect.runPromise(harness.nextReceipt)).toMatchObject({
+      type: "checkpoint.baseline.captured",
+      threadId: "thread-1",
+      checkpointTurnCount: 0,
+      checkpointRef: baselineRef,
+    });
+    expect(gitShowFileAtRef(harness.cwd, baselineRef, "README.md")).toBe("worktree\n");
+    expect(gitRefExists(projectRoot, baselineRef)).toBe(false);
+    expect(threadDetailReads).toEqual([]);
+  });
+
+  it("keeps an existing pre-turn baseline on a provider turn start", async () => {
+    const threadDetailReads: ThreadId[] = [];
+    // Seeds turn refs 0-2 from README v1-v3 and leaves v3 in the worktree.
+    const harness = await createHarness({ threadDetailReads });
+
+    harness.provider.emit({
+      type: "turn.started",
+      eventId: EventId.make("evt-turn-started-existing-baseline"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: ThreadId.make("thread-1"),
+      turnId: asTurnId("turn-existing-baseline"),
+    });
+    await harness.drain();
+
+    expect(
+      gitShowFileAtRef(
+        harness.cwd,
+        checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+        "README.md",
+      ),
+    ).toBe("v1\n");
+    expect(threadDetailReads).toEqual([]);
   });
 
   it("does not create checkpoints while importing historical user messages", async () => {
