@@ -29,7 +29,8 @@ jobs:
           run-install: true
       - name: Verify PowerShell installer safety
         working-directory: scripts
-        run: vp test run hotlap-install.test.ts --maxWorkers=2
+        # Keep the shared test budget for cold PowerShell startup.
+        run: vp test run hotlap-install.test.ts --maxWorkers=2 --config ../vite.config.ts
 
   # Lint, typecheck, and the desktop build each get a runner so they run side by
   # side instead of one after another. The `Check` job at the end of this file
