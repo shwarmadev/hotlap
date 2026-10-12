@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect Crypto has no KeyObject, generateKeyPairSync or sign.
+import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
@@ -5,6 +7,13 @@ import {
   AuthStandardClientScopes,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import {
+  computeDpopAccessTokenHash,
+  computeDpopJwkThumbprint,
+  DpopPublicJwk,
+} from "@t3tools/shared/dpop";
+import * as DateTime from "effect/DateTime";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -82,6 +91,75 @@ const requestMetadata = {
 };
 
 it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
+  it.effect("does not allow a proof-bound session to approve MCP browser access", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const now = yield* DateTime.now;
+      const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
+        namedCurve: "P-256",
+      });
+      const publicJwk = Schema.decodeUnknownSync(DpopPublicJwk)(
+        publicKey.export({ format: "jwk" }),
+      );
+      const bound = yield* sessions.issue({
+        method: "browser-session-cookie",
+        scopes: AuthAdministrativeScopes,
+        proofKeyThumbprint: computeDpopJwkThumbprint(publicJwk),
+      });
+      const url = `http://localhost:${TEST_SERVER_PORT}/oauth/authorize`;
+      const signedRequest = (proofId: string) => {
+        const header = Buffer.from(
+          JSON.stringify({ typ: "dpop+jwt", alg: "ES256", jwk: publicJwk }),
+        ).toString("base64url");
+        const payload = Buffer.from(
+          JSON.stringify({
+            htm: "POST",
+            htu: url,
+            jti: proofId,
+            iat: Math.floor(now.epochMilliseconds / 1_000),
+            ath: computeDpopAccessTokenHash(bound.token),
+          }),
+        ).toString("base64url");
+        const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
+          key: privateKey,
+          dsaEncoding: "ieee-p1363",
+        }).toString("base64url");
+        return HttpServerRequest.fromWeb(
+          new Request(url, {
+            method: "POST",
+            headers: {
+              host: `localhost:${TEST_SERVER_PORT}`,
+              origin: `http://localhost:${TEST_SERVER_PORT}`,
+              cookie: `${sessions.cookieName}=${bound.token}`,
+              authorization: `DPoP ${bound.token}`,
+              dpop: `${header}.${payload}.${signature}`,
+            },
+          }),
+        );
+      };
+
+      // Prove the token, signature and request binding are valid. A fresh proof
+      // below ensures replay rejection cannot mask the browser-approval rule.
+      const ordinary = yield* serverAuth.authenticateHttpRequest(signedRequest("ordinary"));
+      expect(ordinary.sessionId).toBe(bound.sessionId);
+      expect(ordinary.proofKeyThumbprint).toBe(computeDpopJwkThumbprint(publicJwk));
+      const rejected = yield* Effect.flip(
+        serverAuth.authenticateBrowserSession(signedRequest("browser-approval")),
+      );
+      expect(rejected).toMatchObject({
+        _tag: "ServerAuthInvalidCredentialError",
+        diagnostic: "Not a browser session.",
+      });
+
+      const unbound = yield* sessions.issue({ method: "browser-session-cookie" });
+      const browser = yield* serverAuth.authenticateBrowserSession(
+        makeCookieRequest(sessions.cookieName, unbound.token),
+      );
+      expect(browser.sessionId).toBe(unbound.sessionId);
+    }).pipe(Effect.provide(layerEnvironmentAuth())),
+  );
+
   it.effect("uses the reusable dev cookie without overriding a normal scoped cookie", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

@@ -1320,7 +1320,7 @@ export const make = Effect.gen(function* () {
     }
     return authenticateRequest(request).pipe(
       Effect.filterOrFail(
-        (session) => session.method === "browser-session-cookie",
+        (session) => session.method === "browser-session-cookie" && !session.proofKeyThumbprint,
         () => new ServerAuthInvalidCredentialError({ diagnostic: "Not a browser session." }),
       ),
       Effect.withSpan("EnvironmentAuth.authenticateBrowserSession"),
