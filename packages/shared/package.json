@@ -259,6 +259,10 @@
       "types": "./src/readableThreadTranscript.ts",
       "import": "./src/readableThreadTranscript.ts"
     },
+    "./promptLinks": {
+      "types": "./src/promptLinks.ts",
+      "import": "./src/promptLinks.ts"
+    },
     "./threadLinks": {
       "types": "./src/threadLinks.ts",
       "import": "./src/threadLinks.ts"
