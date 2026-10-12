@@ -99,7 +99,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
         namedCurve: "P-256",
       });
-      const publicJwk = Schema.decodeUnknownSync(DpopPublicJwk)(
+      const publicJwk = yield* Schema.decodeUnknownEffect(DpopPublicJwk)(
         publicKey.export({ format: "jwk" }),
       );
       const bound = yield* sessions.issue({
