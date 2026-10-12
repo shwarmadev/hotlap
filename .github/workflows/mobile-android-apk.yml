@@ -1,0 +1,11 @@
+# Hotlap sync keeps upstream deployment automation inactive on this fork.
+name: Upstream deployment disabled on Hotlap
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  disabled:
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    steps:
+      - run: "true"

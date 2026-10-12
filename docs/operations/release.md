@@ -76,7 +76,9 @@ origins must remain `shwarmadev/hotlap`, never upstream T3 releases.
 
 Mobile uses separate EAS workflows. When `EXPO_TOKEN` is available, the release
 workflow attaches the newest finished Android production APK; this does not
-build or validate a new mobile version for that source commit.
+build or validate a new mobile version for that source commit. Upstream's
+hourly Google Play APK mirror (`.github/workflows/mobile-android-apk.yml`, which
+publishes to a rolling `android-nightly` prerelease) is disabled on Hotlap.
 
 ## Publication order and smoke checks
 
