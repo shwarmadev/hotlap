@@ -31,6 +31,10 @@ const layerSetup = Layer.effectDiscard(
           ),
       }),
     );
+    // Without sqlite_stat1 the planner guesses at index selectivity. 0x10012
+    // analyzes tables whose indexes lack stats or whose row count changed 10x,
+    // under a temporary analysis_limit. Otherwise it only checks table sizes.
+    yield* sql`PRAGMA optimize = 0x10012;`;
   }),
 );
 

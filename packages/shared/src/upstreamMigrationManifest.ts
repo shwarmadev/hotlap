@@ -61,6 +61,7 @@ export const upstreamMigrationManifest = [
   [59, "McpAppModelContext"],
   [60, "ThreadSnapshotWindowIndexes"],
   [61, "PullRequestReviewGuides"],
+  [62, "ThreadFailureLookupIndex"],
 ] as const;
 
 export type UpstreamMigrationManifest = typeof upstreamMigrationManifest;

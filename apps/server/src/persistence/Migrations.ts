@@ -77,6 +77,7 @@ import Migration0058 from "./Migrations/058_WebhookRelayDeliveries.ts";
 import Migration0059 from "./Migrations/059_McpAppModelContext.ts";
 import Migration0060 from "./Migrations/060_ThreadSnapshotWindowIndexes.ts";
 import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
+import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -150,6 +151,7 @@ const migrationEffects = {
   59: Migration0059,
   60: Migration0060,
   61: Migration0061,
+  62: Migration0062,
 } as const;
 
 export const migrationEntries = upstreamMigrationManifest.map(
