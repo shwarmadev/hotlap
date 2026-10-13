@@ -29,7 +29,7 @@ describe("runMigrations", () => {
   it.effect("migrates a fresh database through the whole manifest", () =>
     Effect.gen(function* () {
       yield* runMigrations();
-      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* history, [...migrationManifest]);
       assert.isAbove(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
@@ -78,7 +78,7 @@ describe("runMigrations", () => {
     Effect.gen(function* () {
       yield* runMigrations({ toMigrationInclusive: 54 });
       assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
-      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* history, [...migrationManifest]);
       assert.isAbove(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
