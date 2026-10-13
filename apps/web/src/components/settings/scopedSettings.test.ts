@@ -758,6 +758,7 @@ describe("partial object patches at project scope", () => {
       {
         environmentId: server.environmentId,
         label: server.label,
+        previous: expect.anything(),
         patch: {
           projectSettingsOverrides: {
             [projectId]: {
