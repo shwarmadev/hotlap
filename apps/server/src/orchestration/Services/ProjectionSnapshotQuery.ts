@@ -65,6 +65,28 @@ export interface ProjectionThreadCheckpointContext {
   readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
 }
 
+/**
+ * Facts needed to snapshot a thread's workspace for checkpoints. Active threads
+ * only, and no message or checkpoint-file reads, so it stays cheap on long threads.
+ */
+export interface ProjectionThreadCheckpointCaptureContext {
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  /** Null when the project row is gone; the thread worktree may still apply. */
+  readonly workspaceRoot: string | null;
+  readonly worktreePath: string | null;
+  readonly activeTurnId: TurnId | null;
+  /** Highest checkpoint turn count on the thread, 0 when none. */
+  readonly latestCheckpointTurnCount: number;
+}
+
+/** One turn's checkpoint row, without its file summary. */
+export interface ProjectionTurnCheckpoint {
+  readonly checkpointTurnCount: number;
+  readonly status: OrchestrationCheckpointSummary["status"];
+  readonly assistantMessageId: MessageId | null;
+}
+
 export interface ProjectionFullThreadDiffContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -316,6 +338,26 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadCheckpointContext: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<ProjectionThreadCheckpointContext>, ProjectionRepositoryError>;
+
+  /** Read the narrow context used to capture checkpoints for an active thread. */
+  readonly getThreadCheckpointCaptureContext: (
+    threadId: ThreadId,
+  ) => Effect.Effect<
+    Option.Option<ProjectionThreadCheckpointCaptureContext>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read one turn's checkpoint, if it has one. */
+  readonly getTurnCheckpoint: (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) => Effect.Effect<Option.Option<ProjectionTurnCheckpoint>, ProjectionRepositoryError>;
+
+  /** Read the id of a turn's most recent assistant message. */
+  readonly getLatestAssistantMessageIdForTurn: (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) => Effect.Effect<Option.Option<MessageId>, ProjectionRepositoryError>;
 
   /**
    * Read only the narrow context needed to compute a full-thread diff from
