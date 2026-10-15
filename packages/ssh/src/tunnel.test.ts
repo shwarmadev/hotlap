@@ -1066,7 +1066,15 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
     ) =>
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const args = [fakeServer, "serve", "--port", "0", "--base-dir", `${home}/.hotlap`, ...flags];
+        const args = [
+          fakeServer,
+          "serve",
+          "--port",
+          "0",
+          "--base-dir",
+          `${home}/.hotlap`,
+          ...flags,
+        ];
         const server = yield* spawner.spawn(
           options?.unreaped
             ? ChildProcess.make("sh", ["-c", 'node "$@" & exec sleep 600', "sh", ...args])
