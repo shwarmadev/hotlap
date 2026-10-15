@@ -94,7 +94,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
   // Auto-resume after a usage limit: calm, since there is nothing to act on.
   waiting: {
     label: "Waiting",
-    icon: "clock",
+    icon: "circle.dashed.inset.filled",
     className: "text-foreground-muted",
     iconTintClassName: "accent-foreground-muted",
   },

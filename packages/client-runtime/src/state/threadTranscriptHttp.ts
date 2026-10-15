@@ -14,7 +14,10 @@ import { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import {
+  executeAuthenticatedEnvironmentHttpRequest,
+  withOrchestrationProtocolHeader,
+} from "./environmentHttpAuth.ts";
 import { createAtomCommandScheduler, createEnvironmentCommand } from "./runtime.ts";
 
 const DEFAULT_THREAD_TRANSCRIPT_TIMEOUT_MS = 60_000;
@@ -37,7 +40,7 @@ export const fetchEnvironmentThreadTranscript = Effect.fn(
     request: ({ client, headers }) =>
       client.threadTranscript({
         params: { threadId: input.threadId },
-        headers,
+        headers: withOrchestrationProtocolHeader(headers),
       }),
   });
 });
