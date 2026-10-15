@@ -16,7 +16,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
-import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
+import { fetchEnvironmentThreadTranscriptItems } from "./threadTranscriptHttp.ts";
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
@@ -34,7 +34,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
               message: "The source environment is not connected.",
             });
           }
-          return yield* fetchEnvironmentThreadTranscript({
+          return yield* fetchEnvironmentThreadTranscriptItems({
             prepared: prepared.value,
             threadId: input.threadId,
             signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),

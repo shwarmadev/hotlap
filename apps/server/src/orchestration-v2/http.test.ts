@@ -40,6 +40,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ReadableTranscriptService from "./ReadableTranscriptService.ts";
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
@@ -151,6 +152,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ),
       Layer.provide(Layer.succeedContext(services)),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
+      Layer.provide(Layer.mock(ReadableTranscriptService.ReadableTranscriptService)({})),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),
@@ -160,7 +162,7 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     const read = (threadId: ThreadId) =>
       Effect.promise(() =>
         handler(
-          new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript`, {
+          new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript/items`, {
             headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
           }),
         ),

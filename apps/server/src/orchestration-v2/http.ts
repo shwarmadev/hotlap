@@ -311,8 +311,8 @@ export const layer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "threadTranscript",
-        Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
+        "threadTranscriptItems",
+        Effect.fn("environment.orchestration.threadTranscriptItems")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(

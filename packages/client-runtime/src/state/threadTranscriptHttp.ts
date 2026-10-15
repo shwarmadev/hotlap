@@ -45,6 +45,29 @@ export const fetchEnvironmentThreadTranscript = Effect.fn(
   });
 });
 
+export const fetchEnvironmentThreadTranscriptItems = Effect.fn(
+  "clientRuntime.state.fetchEnvironmentThreadTranscriptItems",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly threadId: ThreadId;
+  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly timeoutMs?: number;
+}) {
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    group: "orchestration",
+    method: "GET",
+    url: (urls) => urls.threadTranscriptItems({ params: { threadId: input.threadId } }),
+    timeoutMs: input.timeoutMs ?? DEFAULT_THREAD_TRANSCRIPT_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.threadTranscriptItems({
+        params: { threadId: input.threadId },
+        headers: withOrchestrationProtocolHeader(headers),
+      }),
+  });
+});
+
 export type ThreadTranscriptLoadError = RemoteEnvironmentRequestError;
 
 export class ThreadTranscriptLoader extends Context.Service<

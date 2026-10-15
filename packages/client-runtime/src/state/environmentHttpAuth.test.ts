@@ -38,7 +38,7 @@ import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
-import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
+import { fetchEnvironmentThreadTranscriptItems } from "./threadTranscriptHttp.ts";
 import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import * as BoundedThreadSnapshotHttp from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
@@ -235,11 +235,11 @@ const LOADERS: ReadonlyArray<{
   {
     name: "thread transcript",
     method: "GET",
-    path: `/api/orchestration/threads/${TRANSCRIPT.threadId}/transcript`,
+    path: `/api/orchestration/threads/${TRANSCRIPT.threadId}/transcript/items`,
     response: encodeThreadTranscript(TRANSCRIPT),
     expected: TRANSCRIPT,
     load: (input: HttpInput) =>
-      fetchEnvironmentThreadTranscript({ ...input, threadId: TRANSCRIPT.threadId }),
+      fetchEnvironmentThreadTranscriptItems({ ...input, threadId: TRANSCRIPT.threadId }),
   },
   {
     name: "bounded thread snapshot",
@@ -334,7 +334,7 @@ describe("authenticated environment HTTP requests", () => {
       name: "thread transcript",
       response: encodeThreadTranscript(TRANSCRIPT),
       load: (input: HttpInput) =>
-        fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
+        fetchEnvironmentThreadTranscriptItems({ ...input, threadId: MCP_THREAD_ID }),
     },
     {
       name: "thread snapshot",

@@ -683,12 +683,17 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.get("threadTranscript", "/api/orchestration/threads/:threadId/transcript", {
-      headers: OrchestrationProtocolHeaders,
-      params: EnvironmentOrchestrationThreadSnapshotParams,
-      success: OrchestrationV2ThreadTranscript,
-      error: [EnvironmentRequestInvalidError, ...EnvironmentOrchestrationThreadSnapshotErrors],
-    }).middleware(EnvironmentAuthenticatedAuth),
+    // Hotlap serves its readable transcript at `/transcript`; the item transcript lives beside it.
+    HttpApiEndpoint.get(
+      "threadTranscriptItems",
+      "/api/orchestration/threads/:threadId/transcript/items",
+      {
+        headers: OrchestrationProtocolHeaders,
+        params: EnvironmentOrchestrationThreadSnapshotParams,
+        success: OrchestrationV2ThreadTranscript,
+        error: [EnvironmentRequestInvalidError, ...EnvironmentOrchestrationThreadSnapshotErrors],
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
     HttpApiEndpoint.get("threadBoundedSnapshot", "/api/orchestration/threads/:threadId/bounded", {
