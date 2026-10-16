@@ -11,6 +11,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
+  OrchestrationReadableThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ThreadId,
 } from "@t3tools/contracts";
@@ -47,6 +48,10 @@ class TranscriptTestApi extends HttpApi.make("environment").add(
 ) {}
 const decodeTranscript = Schema.decodeUnknownEffect(
   Schema.toCodecJson(OrchestrationV2ThreadTranscript),
+);
+
+const decodeReadableTranscript = Schema.decodeUnknownEffect(
+  Schema.toCodecJson(OrchestrationReadableThreadTranscript),
 );
 
 const now = DateTime.makeUnsafe("2026-09-29T00:00:00.000Z");
@@ -105,17 +110,18 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ProviderAdapterRegistry.layerFromAdapters([]),
       { runEffectWorker: false },
     );
-    const services = yield* Layer.build(
-      Layer.mergeAll(
-        runtime,
-        ThreadManagementService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
-          ),
+    const serviceLayer = Layer.mergeAll(
+      runtime,
+      ThreadManagementService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
         ),
-        OrchestrationEventStore.layer,
-        ProjectStore.layer,
-      ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+      ),
+      OrchestrationEventStore.layer,
+      ProjectStore.layer,
+    ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
+    const services = yield* Layer.build(
+      ReadableTranscriptService.layer.pipe(Layer.provideMerge(serviceLayer)),
     );
     const eventSink = Context.get(services, EventSinkV2);
     yield* eventSink.write({
@@ -152,19 +158,22 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       ),
       Layer.provide(Layer.succeedContext(services)),
       Layer.provide(Layer.mock(ProjectEnrichmentService)({})),
-      Layer.provide(Layer.mock(ReadableTranscriptService.ReadableTranscriptService)({})),
       Layer.provide(HttpPlatform.layer),
       Layer.provide(Etag.layerWeak),
       Layer.provide(NodeServices.layer),
     );
     const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
     yield* Effect.addFinalizer(() => Effect.promise(dispose));
-    const read = (threadId: ThreadId) =>
+    const read = (threadId: ThreadId, format: "items" | "readable" = "items") =>
       Effect.promise(() =>
         handler(
-          new Request(`http://localhost/api/orchestration/threads/${threadId}/transcript/items`, {
-            headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
-          }),
+          new Request(
+            `http://localhost/api/orchestration/threads/${threadId}/transcript${format === "items" ? "/items" : ""}`,
+            {
+              headers: { [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT },
+            },
+          ),
+          services,
         ),
       );
 
@@ -190,6 +199,17 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
     expect(transcript.items[0]?.item).toMatchObject({ output });
     expect(transcript.items[0]?.visibility).toBe("local");
     expect(transcript.items[199]?.position).toBe(199);
+
+    // Both APIs must coexist: copying a transcript must not return structured items.
+    const readableResponse = yield* read(thread.id, "readable");
+    expect(readableResponse.status).toBe(200);
+    const readable = yield* decodeReadableTranscript(
+      yield* Effect.promise(() => readableResponse.json()),
+    );
+    expect(readable.threadId).toBe(thread.id);
+    expect(readable.title).toBe(thread.title);
+    expect(readable.messageCount).toBe(0);
+    expect(typeof readable.markdown).toBe("string");
 
     const emptyOutputRows = transcript.items.map((row, position) =>
       position === 0 ? { ...row, item: { ...row.item, output: "" } } : row,
@@ -239,8 +259,12 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
       }
     }
 
-    expect((yield* read(ThreadId.make("missing"))).status).toBe(404);
+    for (const format of ["items", "readable"] as const) {
+      expect((yield* read(ThreadId.make("missing"), format)).status).toBe(404);
+    }
     allowed = false;
-    expect((yield* read(thread.id)).status).toBe(403);
+    for (const format of ["items", "readable"] as const) {
+      expect((yield* read(thread.id, format)).status).toBe(403);
+    }
   }),
 );
